@@ -65,23 +65,32 @@ class AudioVisualizer:
         self.ax_wave = self.fig.add_subplot(gs[1, :])
         self.ax_bars = self.fig.add_subplot(gs[2, :])
         
+        self.setup_waveform()
+        self.setup_spectrogram()
+        self.setup_mel()
+        self.setup_frequency_bands()
+    
+    def setup_waveform(self):
         self.line_wave, = self.ax_wave.plot([], [], lw=1, color=self.waveform_color)
         self.ax_wave.set_ylim(-1, 1)
         self.ax_wave.set_title('Waveform', fontsize=10)
-        
+    
+    def setup_spectrogram(self):
         self.spectrogram_data = np.zeros((100, self.spectrogram_height))
         self.spectrogram_img = self.ax_spectrogram.imshow(self.spectrogram_data, 
                                                            aspect='auto', origin='lower',
                                                            cmap=self.spectrogram_colormap, extent=[0, self.spectrogram_max_freq, 0, 100])
         self.ax_spectrogram.set_title('Spectrogram', fontsize=10)
         self.ax_spectrogram.set_yticks([])
-        
+    
+    def setup_mel(self):
         self.mel_img = self.ax_mel.imshow(np.zeros((100, self.mel_banks)), aspect='auto', 
                                           origin='lower', cmap=self.mel_colormap,
                                           extent=[self.mel_freq_low, self.mel_freq_high, 0, 100])
         self.ax_mel.set_title('Mel Spectrogram', fontsize=10)
         self.ax_mel.set_yticks([])
-        
+    
+    def setup_frequency_bands(self):
         self.bars = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
         self.ax_bars.set_ylabel('Magnitude (dB)')
