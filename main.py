@@ -20,16 +20,15 @@ class AudioVisualizer:
         self.max_history = 100
         
         self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
-        
+
         plt.style.use('dark_background')
         self.fig = plt.figure(figsize=(16, 9))
         
         gs = self.fig.add_gridspec(3, 4, height_ratios=[1, 1, 1.5], hspace=0.3, wspace=0.3)
         
-        self.ax_wave = self.fig.add_subplot(gs[0, 0:2])
+        self.ax_mel = self.fig.add_subplot(gs[0, 0:2])
         self.ax_spectrogram = self.fig.add_subplot(gs[0, 2:4])
-        self.ax_phase = self.fig.add_subplot(gs[1, 0:2])
-        self.ax_mel = self.fig.add_subplot(gs[1, 2:4])
+        self.ax_wave = self.fig.add_subplot(gs[1, :])
         self.ax_bars = self.fig.add_subplot(gs[2, :])
         
         self.line_wave, = self.ax_wave.plot([], [], lw=1, color='cyan')
@@ -43,11 +42,6 @@ class AudioVisualizer:
         self.ax_spectrogram.set_title('Spectrogram', fontsize=10)
         self.ax_spectrogram.set_ylabel('Time')
         
-        self.line_phase, = self.ax_phase.plot([], [], lw=1, color='lime')
-        self.ax_phase.set_xlim(0, 2000)
-        self.ax_phase.set_ylim(-np.pi, np.pi)
-        self.ax_phase.set_title('Phase', fontsize=10)
-        
         self.mel_img = self.ax_mel.imshow(np.zeros((100, 20)), aspect='auto', 
                                           origin='lower', cmap='viridis')
         self.ax_mel.set_title('Mel Spectrogram', fontsize=10)
@@ -59,58 +53,33 @@ class AudioVisualizer:
         self.ax_bars.set_title('Frequency Bands', fontsize=10)
         self.ax_bars.set_ylim(16, 100)
     
-    def update(self, frame):
-        if self.audio_buffer is None:
-            return []
-        
+    def update_waveform(self):
         self.line_wave.set_data(np.arange(len(self.audio_buffer)), self.audio_buffer)
         self.ax_wave.set_xlim(0, len(self.audio_buffer))
         
-        windowed = self.audio_buffer * np.hanning(len(self.audio_buffer))
-        fft = np.fft.rfft(windowed)
-        magnitude = np.abs(fft)
-        phase = np.angle(fft)
-        
-        magnitude_db = 20 * np.log10(magnitude + 1e-10)
-        
-        if self.prev_magnitude is not None:
-            magnitude_db = self.smoothing * self.prev_magnitude + (1 - self.smoothing) * magnitude_db
-        
-        self.prev_magnitude = magnitude_db
-        
-        freqs = np.fft.rfftfreq(len(self.audio_buffer), 1/self.sample_rate)
-        
-        visible_mask = freqs <= 10000
-        visible_freqs = freqs[visible_mask]
-        visible_magnitude = magnitude_db[visible_mask]
-        
+        max_amp = np.max(np.abs(self.audio_buffer))
+        if max_amp > 0:
+            ylim = max(max_amp * 1.2, 0.01)
+            self.ax_wave.set_ylim(-ylim, ylim)
+    
+    def update_spectrogram(self, freqs, magnitude_db):
         spec_mask = freqs <= 5000
-        spec_freqs = freqs[spec_mask]
         spec_mag = magnitude_db[spec_mask]
         
         if len(spec_mag) > 0:
-            spec_mag_normalized = (spec_mag - np.min(spec_mag)) / (np.max(spec_mag) - np.min(spec_mag) + 1e-10)
+            noise_floor = np.percentile(spec_mag, 30)
+            spec_mag_clean = np.maximum(spec_mag - noise_floor, 0)
+            spec_mag_normalized = (spec_mag_clean - np.min(spec_mag_clean)) / (np.max(spec_mag_clean) - np.min(spec_mag_clean) + 1e-10)
             spec_mag_normalized = np.clip(spec_mag_normalized, 0, 1)
+            spec_mag_normalized = np.power(spec_mag_normalized, 1.5)
             
             self.spectrogram_data = np.roll(self.spectrogram_data, 1, axis=0)
             self.spectrogram_data[0, :] = np.interp(np.linspace(0, len(spec_mag_normalized)-1, 50), 
                                                        np.arange(len(spec_mag_normalized)), spec_mag_normalized)
             self.spectrogram_img.set_data(self.spectrogram_data)
             self.spectrogram_img.set_clim(0, 1)
-        
-        phase_mask = freqs <= 2000
-        phase_freqs = freqs[phase_mask]
-        phase_vals = phase[phase_mask]
-        phase_mags = magnitude[phase_mask]
-        
-        mag_threshold = np.max(magnitude) * 0.1
-        significant_mask = phase_mags > mag_threshold
-        
-        if np.any(significant_mask):
-            self.line_phase.set_data(phase_freqs[significant_mask], phase_vals[significant_mask])
-        else:
-            self.line_phase.set_data([], [])
-        
+    
+    def update_mel(self, freqs, magnitude):
         mel_banks = 20
         mel_low = 2595 * np.log10(1 + 80 / 700)
         mel_high = 2595 * np.log10(1 + 5000 / 700)
@@ -132,7 +101,8 @@ class AudioVisualizer:
         mel_data[0, :] = mel_normalized
         self.mel_img.set_data(mel_data)
         self.mel_img.set_clim(0, 1)
-        
+    
+    def update_frequency_bands(self, visible_freqs, visible_magnitude):
         bin_edges = np.linspace(0, 10000, self.num_bins + 1)
         bin_magnitudes = []
         for i in range(self.num_bins):
@@ -141,6 +111,9 @@ class AudioVisualizer:
                 bin_magnitudes.append(np.max(visible_magnitude[mask]) + 80)
             else:
                 bin_magnitudes.append(0)
+        
+        baseline = np.percentile(bin_magnitudes, 10)
+        bin_magnitudes = [max(m - baseline, 0) for m in bin_magnitudes]
         
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         bin_widths = bin_edges[1] - bin_edges[0]
@@ -157,6 +130,32 @@ class AudioVisualizer:
         colors = plt.cm.plasma(normalized)
         for bar, color in zip(self.bars, colors):
             bar.set_color(color)
+    
+    def update(self, frame):
+        if self.audio_buffer is None:
+            return []
+        
+        windowed = self.audio_buffer * np.hanning(len(self.audio_buffer))
+        fft = np.fft.rfft(windowed)
+        magnitude = np.abs(fft)
+        
+        magnitude_db = 20 * np.log10(magnitude + 1e-10)
+        
+        if self.prev_magnitude is not None:
+            magnitude_db = self.smoothing * self.prev_magnitude + (1 - self.smoothing) * magnitude_db
+        
+        self.prev_magnitude = magnitude_db
+        
+        freqs = np.fft.rfftfreq(len(self.audio_buffer), 1/self.sample_rate)
+        
+        visible_mask = freqs <= 10000
+        visible_freqs = freqs[visible_mask]
+        visible_magnitude = magnitude_db[visible_mask]
+        
+        self.update_waveform()
+        self.update_spectrogram(freqs, magnitude_db)
+        self.update_mel(freqs, magnitude)
+        self.update_frequency_bands(visible_freqs, visible_magnitude)
         
         return []
     
