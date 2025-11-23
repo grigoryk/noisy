@@ -4,41 +4,63 @@ import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from scipy.signal import butter, sosfilt
 
 
 class AudioVisualizer:
-    def __init__(self, sample_rate, num_bins=100):
+    def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
         self.sample_rate = sample_rate
         self.num_bins = num_bins
         self.audio_buffer = None
+        self.highpass_freq = highpass_freq
+        self.smoothing = smoothing
+        self.prev_magnitude = None
+        
+        self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
         
         plt.style.use('dark_background')
         self.fig, self.ax = plt.subplots(figsize=(12, 6))
         self.line, = self.ax.plot([], [], lw=2)
         
-        self.ax.set_xlim(0, sample_rate // 2)
-        self.ax.set_ylim(0, 1)
+        self.ax.set_xlim(0, 5000)
         self.ax.set_xlabel('Frequency (Hz)')
-        self.ax.set_ylabel('Magnitude')
+        self.ax.set_ylabel('Magnitude (dB)')
         self.ax.set_title('Real-time FFT')
     
     def update(self, frame):
         if self.audio_buffer is None:
             return self.line,
         
-        fft = np.fft.rfft(self.audio_buffer)
+        windowed = self.audio_buffer * np.hanning(len(self.audio_buffer))
+        fft = np.fft.rfft(windowed)
         magnitude = np.abs(fft)
-        magnitude = magnitude / np.max(magnitude) if np.max(magnitude) > 0 else magnitude
+        
+        magnitude_db = 20 * np.log10(magnitude + 1e-10)
+        
+        if self.prev_magnitude is not None:
+            magnitude_db = self.smoothing * self.prev_magnitude + (1 - self.smoothing) * magnitude_db
+        
+        self.prev_magnitude = magnitude_db
         
         freqs = np.fft.rfftfreq(len(self.audio_buffer), 1/self.sample_rate)
         
-        self.line.set_data(freqs, magnitude)
+        visible_mask = freqs <= 2000
+        visible_magnitude = magnitude_db[visible_mask]
+        
+        self.line.set_data(freqs, magnitude_db)
+        
+        y_min, y_max = np.min(visible_magnitude), np.max(visible_magnitude)
+        y_range = y_max - y_min
+        self.ax.set_ylim(y_min - y_range * 0.3, y_max + y_range * 0.3)
+        
         return self.line,
     
     def audio_callback(self, indata, frames, time, status):
         if status:
             print(f"Status: {status}")
-        self.audio_buffer = indata[:, 0].copy()
+        
+        filtered = sosfilt(self.sos, indata[:, 0])
+        self.audio_buffer = filtered.copy()
     
     def run(self, device_id):
         with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
