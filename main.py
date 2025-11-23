@@ -11,7 +11,7 @@ from scipy.signal import butter, sosfilt
 class AudioVisualizer:
     def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
         # Waveform tuning
-        self.waveform_zoom = 2.1  # how much padding around signal (higher = more padding, less jumpy)
+        self.waveform_zoom = 10 # how much padding around signal (higher = more padding, less jumpy)
         self.ylim_history_size = 8  # how quickly zoom adjusts to loudness changes (higher = slower)
         self.ylim_smoothing = 0.8  # how smooth zoom transitions are (higher = smoother)
         
@@ -22,6 +22,12 @@ class AudioVisualizer:
         self.bands_magnitude_offset = 80  # shifts magnitude values up (dB offset for visibility)
         self.bands_magnitude_scale = 80  # normalization factor for colors
         self.bands_smoothing = 0.7  # how smooth bar transitions are (higher = smoother)
+        
+        # Voice frequency bands tuning
+        self.voice_num_bins = 30  # bars for voice range
+        self.voice_max_freq = 1000  # focus on fundamental voice frequencies (Hz)
+        self.voice_baseline_percentile = 10  # remove noise floor but keep speech visible
+        self.voice_magnitude_offset = 60  # moderate boost for visibility
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
@@ -59,6 +65,7 @@ class AudioVisualizer:
         self.prev_magnitude = None
         self.prev_ylim = None
         self.prev_bin_magnitudes = None
+        self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
         
         self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
@@ -75,10 +82,15 @@ class AudioVisualizer:
         
         self.ax_spectrogram = self.fig.add_subplot(gs[0], facecolor=self.background_color)
         self.ax_wave = self.fig.add_subplot(gs[1], facecolor=self.background_color)
-        self.ax_bars = self.fig.add_subplot(gs[2], facecolor=self.background_color)
+        
+        # Split bottom row into voice (1/3) and full range (2/3)
+        gs_bottom = gs[2].subgridspec(1, 2, width_ratios=[1, 2], wspace=0.15)
+        self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], facecolor=self.background_color)
+        self.ax_bars = self.fig.add_subplot(gs_bottom[1], facecolor=self.background_color)
         
         self.setup_waveform()
         self.setup_spectrogram()
+        self.setup_voice_frequency_bands()
         self.setup_frequency_bands()
     
     def setup_waveform(self):
@@ -114,6 +126,18 @@ class AudioVisualizer:
             spine.set_visible(False)
         self.ax_spectrogram.tick_params(axis='x', colors=self.border_color, labelsize=self.label_fontsize, which='both')
         for label in self.ax_spectrogram.get_xticklabels():
+            label.set_alpha(self.label_alpha)
+    
+    def setup_voice_frequency_bands(self):
+        self.voice_bars = None
+        self.ax_voice_bars.set_xlim(0, self.voice_max_freq)
+        ylabel = self.ax_voice_bars.set_ylabel('Voice (dB)', color=self.text_color)
+        ylabel.set_alpha(self.label_alpha)
+        self.ax_voice_bars.set_ylim(16, 100)
+        for spine in self.ax_voice_bars.spines.values():
+            spine.set_visible(False)
+        self.ax_voice_bars.tick_params(axis='both', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+        for label in self.ax_voice_bars.get_xticklabels() + self.ax_voice_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
     
     def setup_frequency_bands(self):
@@ -184,6 +208,38 @@ class AudioVisualizer:
         self.spectrogram_img.set_data(self.spectrogram_data)
         self.spectrogram_img.set_clim(0, 1)
     
+    def update_voice_frequency_bands(self, visible_freqs, visible_magnitude):
+        bin_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        bin_magnitudes = np.interp(bin_centers, visible_freqs, visible_magnitude) + self.voice_magnitude_offset
+        
+        if self.voice_baseline_percentile > 0:
+            baseline = np.percentile(bin_magnitudes, self.voice_baseline_percentile)
+            bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
+        
+        bin_magnitudes = bin_magnitudes.tolist()
+        
+        if self.prev_voice_bin_magnitudes is not None:
+            bin_magnitudes = [
+                self.bands_smoothing * prev + (1 - self.bands_smoothing) * curr
+                for prev, curr in zip(self.prev_voice_bin_magnitudes, bin_magnitudes)
+            ]
+        self.prev_voice_bin_magnitudes = bin_magnitudes
+        
+        bin_widths = bin_edges[1] - bin_edges[0]
+        
+        normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
+        colors = self.bands_colormap(normalized)
+        
+        if self.voice_bars:
+            for bar, height in zip(self.voice_bars, bin_magnitudes):
+                bar.set_height(height)
+            for bar, color in zip(self.voice_bars, colors):
+                bar.set_color(color)
+        else:
+            self.voice_bars = self.ax_voice_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
+    
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
         bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
@@ -209,8 +265,7 @@ class AudioVisualizer:
         bin_widths = bin_edges[1] - bin_edges[0]
         
         normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
-        colormap = plt.cm.get_cmap(self.bands_colormap)
-        colors = colormap(normalized)
+        colors = self.bands_colormap(normalized)
         
         if self.bars:
             for bar, height in zip(self.bars, bin_magnitudes):
@@ -243,6 +298,7 @@ class AudioVisualizer:
         
         self.update_waveform()
         self.update_spectrogram(freqs, magnitude_db)
+        self.update_voice_frequency_bands(visible_freqs, visible_magnitude)
         self.update_frequency_bands(visible_freqs, visible_magnitude)
         
         return []
