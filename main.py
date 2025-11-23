@@ -236,6 +236,7 @@ class AudioVisualizer:
         self.spectrogram_img.set_data(self.spectrogram_data)
         self.spectrogram_img.set_clim(0, 1)
     
+    @line_profiler.profile
     def update_voice_frequency_bands(self, visible_freqs, visible_magnitude):
         # Get voice frequency range
         voice_mask = visible_freqs <= self.voice_max_freq
