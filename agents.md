@@ -26,3 +26,16 @@
 ### Agent Behavior
 - Always update agents.md file when user gives new instructions or preferences
 - Keep the log current with latest guidance
+
+### Session Context Management
+- At the start of each session, read session_context.md to understand project state
+- Update session_context.md at the end of significant work sessions with:
+  - New features added
+  - Architecture changes
+  - Configuration variable additions
+  - Known issues or observations about current implementation
+  - Recent changes summary
+- If user asks to "save session context" or at natural stopping points, update the file
+- session_context.md serves as project memory across sessions
+- Keep it factual and technical - document what exists and observations about current behavior
+- Observations section can note limitations or characteristics of current implementation
