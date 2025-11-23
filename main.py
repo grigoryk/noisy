@@ -6,12 +6,22 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.signal import butter, sosfilt
+import cProfile
+import pstats
+import io
+import time
 
 
 class AudioVisualizer:
     def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
         # Performance tuning
-        self.update_interval_ms = 60  # milliseconds between frames (lower = higher FPS, more CPU)
+        self.update_interval_ms = 20  # milliseconds between frames (lower = higher FPS, more CPU)
+        
+        # FPS tracking
+        self.last_frame_time = None
+        self.frame_intervals = []
+        self.fps_update_interval = 10  # update FPS display every N frames
+        self.frame_counter = 0
         
         # Waveform tuning
         self.waveform_zoom = 10 # how much padding around signal (higher = more padding, less jumpy)
@@ -97,6 +107,7 @@ class AudioVisualizer:
         self.setup_spectrogram()
         self.setup_voice_frequency_bands()
         self.setup_frequency_bands()
+        self.setup_fps_display()
     
     def setup_waveform(self):
         self.line_wave, = self.ax_wave.plot([], [], lw=self.waveform_linewidth, color=self.waveform_color, alpha=self.waveform_alpha)
@@ -161,6 +172,12 @@ class AudioVisualizer:
         self.ax_bars.tick_params(axis='both', colors=self.border_color, labelsize=self.label_fontsize, which='both')
         for label in self.ax_bars.get_xticklabels() + self.ax_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
+    
+    def setup_fps_display(self):
+        self.fps_text = self.fig.text(0.98, 0.02, '', ha='right', va='bottom',
+                                     fontsize=10, color=self.text_color, alpha=0.6,
+                                     bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color,
+                                              edgecolor=self.border_color, alpha=0.3))
     
     def update_waveform(self):
         self.line_wave.set_data(np.arange(len(self.audio_buffer)), self.audio_buffer)
@@ -299,6 +316,8 @@ class AudioVisualizer:
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
     
     def update(self, _frame):
+        frame_start = time.perf_counter()
+        
         if self.audio_buffer is None:
             return []
         
@@ -323,6 +342,23 @@ class AudioVisualizer:
         self.update_spectrogram(freqs, magnitude_db)
         self.update_voice_frequency_bands(visible_freqs, visible_magnitude)
         self.update_frequency_bands(visible_freqs, visible_magnitude)
+        
+        # Update FPS display - measure actual interval between frames
+        current_time = time.perf_counter()
+        if self.last_frame_time is not None:
+            frame_interval = current_time - self.last_frame_time
+            self.frame_intervals.append(frame_interval)
+            if len(self.frame_intervals) > 30:
+                self.frame_intervals.pop(0)
+        self.last_frame_time = current_time
+        
+        self.frame_counter += 1
+        if self.frame_counter >= self.fps_update_interval and len(self.frame_intervals) > 0:
+            avg_interval = np.mean(self.frame_intervals)
+            fps = 1.0 / avg_interval if avg_interval > 0 else 0
+            update_time = current_time - frame_start
+            self.fps_text.set_text(f'{fps:.1f} FPS ({update_time*1000:.1f}ms)')
+            self.frame_counter = 0
         
         return []
     
@@ -383,4 +419,20 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if '--profile' in sys.argv:
+        profiler = cProfile.Profile()
+        profiler.enable()
+        try:
+            main()
+        finally:
+            profiler.disable()
+            stats = pstats.Stats(profiler)
+            stats.strip_dirs()
+            stats.sort_stats('cumulative')
+            print("\n" + "="*80)
+            print("PROFILING RESULTS")
+            print("="*80)
+            stats.print_stats(30)
+    else:
+        main()
