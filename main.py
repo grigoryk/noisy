@@ -28,6 +28,8 @@ class AudioVisualizer:
         self.voice_max_freq = 1000  # focus on fundamental voice frequencies (Hz)
         self.voice_baseline_percentile = 10  # remove noise floor but keep speech visible
         self.voice_magnitude_offset = 60  # moderate boost for visibility
+        self.voice_noise_threshold = 15  # dB above noise floor to show a point
+        self.voice_noise_history_size = 50  # frames to track for noise floor estimation
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
@@ -67,6 +69,7 @@ class AudioVisualizer:
         self.prev_bin_magnitudes = None
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
+        self.voice_noise_floor_history = []
         
         self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
 
@@ -85,7 +88,7 @@ class AudioVisualizer:
         
         # Split bottom row into voice (1/3) and full range (2/3)
         gs_bottom = gs[2].subgridspec(1, 2, width_ratios=[1, 2], wspace=0.15)
-        self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], facecolor=self.background_color)
+        self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], projection='polar', facecolor=self.background_color)
         self.ax_bars = self.fig.add_subplot(gs_bottom[1], facecolor=self.background_color)
         
         self.setup_waveform()
@@ -130,13 +133,18 @@ class AudioVisualizer:
     
     def setup_voice_frequency_bands(self):
         self.voice_bars = None
-        self.ax_voice_bars.set_xlim(0, self.voice_max_freq)
-        ylabel = self.ax_voice_bars.set_ylabel('Voice (dB)', color=self.text_color)
-        ylabel.set_alpha(self.label_alpha)
-        self.ax_voice_bars.set_ylim(16, 100)
-        for spine in self.ax_voice_bars.spines.values():
-            spine.set_visible(False)
-        self.ax_voice_bars.tick_params(axis='both', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+        self.ax_voice_bars.set_ylim(0, 60)
+        self.ax_voice_bars.set_theta_zero_location('N')
+        self.ax_voice_bars.set_theta_direction(-1)
+        self.ax_voice_bars.set_facecolor(self.background_color)
+        self.ax_voice_bars.grid(True, alpha=0.2, color=self.border_color)
+        self.ax_voice_bars.spines['polar'].set_visible(False)
+        # Reduce number of angle labels
+        self.ax_voice_bars.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
+        self.ax_voice_bars.set_xticklabels(['250', '500', '750', '1000'])
+        # Reduce radial labels
+        self.ax_voice_bars.set_yticks([20, 40, 60])
+        self.ax_voice_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
         for label in self.ax_voice_bars.get_xticklabels() + self.ax_voice_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
     
@@ -209,36 +217,52 @@ class AudioVisualizer:
         self.spectrogram_img.set_clim(0, 1)
     
     def update_voice_frequency_bands(self, visible_freqs, visible_magnitude):
+        # Get voice frequency range
+        voice_mask = visible_freqs <= self.voice_max_freq
+        voice_freqs = visible_freqs[voice_mask]
+        voice_magnitude = visible_magnitude[voice_mask]
+        
+        # Track noise floor over time
+        current_noise_floor = np.percentile(voice_magnitude, 20)
+        self.voice_noise_floor_history.append(current_noise_floor)
+        if len(self.voice_noise_floor_history) > self.voice_noise_history_size:
+            self.voice_noise_floor_history.pop(0)
+        
+        # Calculate adaptive noise floor (average over history)
+        adaptive_noise_floor = np.mean(self.voice_noise_floor_history)
+        
+        # Create bins for polar chart
         bin_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
-        bin_magnitudes = np.interp(bin_centers, visible_freqs, visible_magnitude) + self.voice_magnitude_offset
+        # Interpolate magnitude at bin centers
+        bin_magnitudes = np.interp(bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor
         
-        if self.voice_baseline_percentile > 0:
-            baseline = np.percentile(bin_magnitudes, self.voice_baseline_percentile)
-            bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
+        # Filter out bins below threshold
+        threshold = self.voice_noise_threshold
+        bin_magnitudes = np.maximum(bin_magnitudes - threshold, 0)
         
-        bin_magnitudes = bin_magnitudes.tolist()
-        
+        # Smooth the data
         if self.prev_voice_bin_magnitudes is not None:
-            bin_magnitudes = [
-                self.bands_smoothing * prev + (1 - self.bands_smoothing) * curr
-                for prev, curr in zip(self.prev_voice_bin_magnitudes, bin_magnitudes)
-            ]
+            bin_magnitudes = self.bands_smoothing * self.prev_voice_bin_magnitudes + (1 - self.bands_smoothing) * bin_magnitudes
         self.prev_voice_bin_magnitudes = bin_magnitudes
         
-        bin_widths = bin_edges[1] - bin_edges[0]
+        # Convert frequency bins to angles (0 to 2π)
+        theta = np.linspace(0, 2 * np.pi, self.voice_num_bins, endpoint=False)
+        width = 2 * np.pi / self.voice_num_bins
         
-        normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
+        # Normalize for colors
+        normalized = np.clip(bin_magnitudes / 60, 0, 1)
         colors = self.bands_colormap(normalized)
         
+        # Update polar bar chart
         if self.voice_bars:
             for bar, height in zip(self.voice_bars, bin_magnitudes):
                 bar.set_height(height)
             for bar, color in zip(self.voice_bars, colors):
                 bar.set_color(color)
         else:
-            self.voice_bars = self.ax_voice_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
+            self.voice_bars = self.ax_voice_bars.bar(theta, bin_magnitudes, width=width, color=colors, alpha=0.8)
     
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
