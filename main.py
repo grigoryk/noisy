@@ -9,13 +9,45 @@ from scipy.signal import butter, sosfilt
 
 
 class AudioVisualizer:
-    def __init__(self, sample_rate, num_bins=50, highpass_freq=80, smoothing=0.5):
+    def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
+        # Waveform tuning
+        self.waveform_zoom = 2.1  # how much padding around signal (higher = more padding, less jumpy)
+        self.ylim_history_size = 8  # how quickly zoom adjusts to loudness changes (higher = slower)
+        self.ylim_smoothing = 0.8  # how smooth zoom transitions are (higher = smoother)
+        
+        # Frequency bands tuning
+        self.num_bins = num_bins  # how many bars to display (higher = more detail)
+        self.bands_max_freq = 8000  # highest frequency to analyze and display (Hz)
+        self.bands_baseline_percentile = 0  # cuts off bottom N% as noise floor (higher = more cutoff)
+        self.bands_magnitude_offset = 80  # shifts magnitude values up (dB offset for visibility)
+        self.bands_magnitude_scale = 80  # normalization factor for colors
+        self.bands_smoothing = 0.7  # how smooth bar transitions are (higher = smoother)
+        
+        # Spectrogram tuning
+        self.spectrogram_noise_floor = 30  # percentile for noise removal (higher = more aggressive)
+        self.spectrogram_power = 1.5  # contrast enhancement (higher = more contrast)
+        
+        # Mel spectrogram tuning
+        self.mel_banks = 20  # number of frequency bands
+        self.mel_freq_low = 80  # lowest frequency (Hz)
+        self.mel_freq_high = 5000  # highest frequency (Hz)
+        
+        # Audio processing
+        self.highpass_freq = highpass_freq  # filters out frequencies below this (Hz)
+        self.smoothing = smoothing  # how much to smooth FFT data between frames (higher = smoother)
+        
+        # Visual styling
+        self.waveform_color = 'cyan'
+        self.spectrogram_colormap = 'inferno'
+        self.mel_colormap = 'viridis'
+        self.bands_colormap = 'plasma'
+        
         self.sample_rate = sample_rate
-        self.num_bins = num_bins
         self.audio_buffer = None
-        self.highpass_freq = highpass_freq
-        self.smoothing = smoothing
         self.prev_magnitude = None
+        self.prev_ylim = None
+        self.prev_bin_magnitudes = None
+        self.ylim_history = []
         self.waveform_history = []
         self.max_history = 100
         
@@ -31,24 +63,24 @@ class AudioVisualizer:
         self.ax_wave = self.fig.add_subplot(gs[1, :])
         self.ax_bars = self.fig.add_subplot(gs[2, :])
         
-        self.line_wave, = self.ax_wave.plot([], [], lw=1, color='cyan')
+        self.line_wave, = self.ax_wave.plot([], [], lw=1, color=self.waveform_color)
         self.ax_wave.set_ylim(-1, 1)
         self.ax_wave.set_title('Waveform', fontsize=10)
         
         self.spectrogram_data = np.zeros((100, 50))
         self.spectrogram_img = self.ax_spectrogram.imshow(self.spectrogram_data, 
                                                            aspect='auto', origin='lower',
-                                                           cmap='inferno', extent=[0, 5000, 0, 100])
+                                                           cmap=self.spectrogram_colormap, extent=[0, 5000, 0, 100])
         self.ax_spectrogram.set_title('Spectrogram', fontsize=10)
         self.ax_spectrogram.set_ylabel('Time')
         
         self.mel_img = self.ax_mel.imshow(np.zeros((100, 20)), aspect='auto', 
-                                          origin='lower', cmap='viridis')
+                                          origin='lower', cmap=self.mel_colormap)
         self.ax_mel.set_title('Mel Spectrogram', fontsize=10)
         self.ax_mel.set_ylabel('Time')
         
         self.bars = None
-        self.ax_bars.set_xlim(0, 10000)
+        self.ax_bars.set_xlim(0, self.bands_max_freq)
         self.ax_bars.set_ylabel('Magnitude (dB)')
         self.ax_bars.set_title('Frequency Bands', fontsize=10)
         self.ax_bars.set_ylim(16, 100)
@@ -59,7 +91,19 @@ class AudioVisualizer:
         
         max_amp = np.max(np.abs(self.audio_buffer))
         if max_amp > 0:
-            ylim = max(max_amp * 1.2, 0.01)
+            target_ylim = max(max_amp * self.waveform_zoom, 0.01)
+            
+            self.ylim_history.append(target_ylim)
+            if len(self.ylim_history) > self.ylim_history_size:
+                self.ylim_history.pop(0)
+            
+            avg_ylim = np.mean(self.ylim_history)
+            
+            if self.prev_ylim is not None:
+                ylim = self.ylim_smoothing * self.prev_ylim + (1 - self.ylim_smoothing) * avg_ylim
+            else:
+                ylim = avg_ylim
+            self.prev_ylim = ylim
             self.ax_wave.set_ylim(-ylim, ylim)
     
     def update_spectrogram(self, freqs, magnitude_db):
@@ -67,11 +111,11 @@ class AudioVisualizer:
         spec_mag = magnitude_db[spec_mask]
         
         if len(spec_mag) > 0:
-            noise_floor = np.percentile(spec_mag, 30)
+            noise_floor = np.percentile(spec_mag, self.spectrogram_noise_floor)
             spec_mag_clean = np.maximum(spec_mag - noise_floor, 0)
             spec_mag_normalized = (spec_mag_clean - np.min(spec_mag_clean)) / (np.max(spec_mag_clean) - np.min(spec_mag_clean) + 1e-10)
             spec_mag_normalized = np.clip(spec_mag_normalized, 0, 1)
-            spec_mag_normalized = np.power(spec_mag_normalized, 1.5)
+            spec_mag_normalized = np.power(spec_mag_normalized, self.spectrogram_power)
             
             self.spectrogram_data = np.roll(self.spectrogram_data, 1, axis=0)
             self.spectrogram_data[0, :] = np.interp(np.linspace(0, len(spec_mag_normalized)-1, 50), 
@@ -80,14 +124,13 @@ class AudioVisualizer:
             self.spectrogram_img.set_clim(0, 1)
     
     def update_mel(self, freqs, magnitude):
-        mel_banks = 20
-        mel_low = 2595 * np.log10(1 + 80 / 700)
-        mel_high = 2595 * np.log10(1 + 5000 / 700)
-        mel_points = np.linspace(mel_low, mel_high, mel_banks + 2)
+        mel_low = 2595 * np.log10(1 + self.mel_freq_low / 700)
+        mel_high = 2595 * np.log10(1 + self.mel_freq_high / 700)
+        mel_points = np.linspace(mel_low, mel_high, self.mel_banks + 2)
         hz_points = 700 * (10**(mel_points / 2595) - 1)
         
         mel_energies = []
-        for i in range(mel_banks):
+        for i in range(self.mel_banks):
             mask = (freqs >= hz_points[i]) & (freqs < hz_points[i+2])
             if np.any(mask):
                 mel_energies.append(np.mean(magnitude[mask]))
@@ -103,17 +146,24 @@ class AudioVisualizer:
         self.mel_img.set_clim(0, 1)
     
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
-        bin_edges = np.linspace(0, 10000, self.num_bins + 1)
+        bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
         bin_magnitudes = []
         for i in range(self.num_bins):
             mask = (visible_freqs >= bin_edges[i]) & (visible_freqs < bin_edges[i+1])
             if np.any(mask):
-                bin_magnitudes.append(np.max(visible_magnitude[mask]) + 80)
+                bin_magnitudes.append(np.max(visible_magnitude[mask]) + self.bands_magnitude_offset)
             else:
                 bin_magnitudes.append(0)
         
-        baseline = np.percentile(bin_magnitudes, 10)
+        baseline = np.percentile(bin_magnitudes, self.bands_baseline_percentile)
         bin_magnitudes = [max(m - baseline, 0) for m in bin_magnitudes]
+        
+        if self.prev_bin_magnitudes is not None:
+            bin_magnitudes = [
+                self.bands_smoothing * prev + (1 - self.bands_smoothing) * curr
+                for prev, curr in zip(self.prev_bin_magnitudes, bin_magnitudes)
+            ]
+        self.prev_bin_magnitudes = bin_magnitudes
         
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         bin_widths = bin_edges[1] - bin_edges[0]
@@ -122,12 +172,14 @@ class AudioVisualizer:
             for bar, height in zip(self.bars, bin_magnitudes):
                 bar.set_height(height)
         else:
-            normalized = np.clip(np.array(bin_magnitudes) / 80, 0, 1)
-            colors = plt.cm.plasma(normalized)
+            normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
+            colormap = plt.cm.get_cmap(self.bands_colormap)
+            colors = colormap(normalized)
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
         
-        normalized = np.clip(np.array(bin_magnitudes) / 80, 0, 1)
-        colors = plt.cm.plasma(normalized)
+        normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
+        colormap = plt.cm.get_cmap(self.bands_colormap)
+        colors = colormap(normalized)
         for bar, color in zip(self.bars, colors):
             bar.set_color(color)
     
@@ -148,7 +200,7 @@ class AudioVisualizer:
         
         freqs = np.fft.rfftfreq(len(self.audio_buffer), 1/self.sample_rate)
         
-        visible_mask = freqs <= 10000
+        visible_mask = freqs <= self.bands_max_freq
         visible_freqs = freqs[visible_mask]
         visible_magnitude = magnitude_db[visible_mask]
         
