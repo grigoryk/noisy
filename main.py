@@ -6,13 +6,12 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.signal import butter, sosfilt
-import cProfile
-import pstats
-import io
 import time
+import line_profiler
 
 
 class AudioVisualizer:
+    @line_profiler.profile
     def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
         # Performance tuning
         self.update_interval_ms = 20  # milliseconds between frames (lower = higher FPS, more CPU)
@@ -285,6 +284,7 @@ class AudioVisualizer:
         else:
             self.voice_bars = self.ax_voice_bars.bar(theta, bin_magnitudes, width=width, color=colors, alpha=0.8)
     
+    @line_profiler.profile
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
         bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
@@ -315,6 +315,7 @@ class AudioVisualizer:
         else:
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
     
+    @line_profiler.profile
     def update(self, _frame):
         frame_start = time.perf_counter()
         
@@ -369,6 +370,7 @@ class AudioVisualizer:
         filtered = sosfilt(self.sos, indata[:, 0])
         self.audio_buffer = filtered.copy()
     
+    @line_profiler.profile
     def run(self, device_id):
         with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
             manager = plt.get_current_fig_manager()
@@ -419,20 +421,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    if '--profile' in sys.argv:
-        profiler = cProfile.Profile()
-        profiler.enable()
-        try:
-            main()
-        finally:
-            profiler.disable()
-            stats = pstats.Stats(profiler)
-            stats.strip_dirs()
-            stats.sort_stats('cumulative')
-            print("\n" + "="*80)
-            print("PROFILING RESULTS")
-            print("="*80)
-            stats.print_stats(30)
-    else:
-        main()
+    main()
