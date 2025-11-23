@@ -29,8 +29,9 @@ class AudioVisualizer:
         
         # Mel spectrogram tuning
         self.mel_banks = 20  # number of frequency bands
-        self.mel_freq_low = 80  # lowest frequency (Hz)
+        self.mel_freq_low = 2000  # lowest frequency (Hz)
         self.mel_freq_high = 5000  # highest frequency (Hz)
+        self.mel_noise_floor = 30  # percentile for noise removal (higher = cleaner)
         
         # Audio processing
         self.highpass_freq = highpass_freq  # filters out frequencies below this (Hz)
@@ -72,12 +73,15 @@ class AudioVisualizer:
                                                            aspect='auto', origin='lower',
                                                            cmap=self.spectrogram_colormap, extent=[0, 5000, 0, 100])
         self.ax_spectrogram.set_title('Spectrogram', fontsize=10)
-        self.ax_spectrogram.set_ylabel('Time')
+        self.ax_spectrogram.set_yticks([])
         
-        self.mel_img = self.ax_mel.imshow(np.zeros((100, 20)), aspect='auto', 
-                                          origin='lower', cmap=self.mel_colormap)
+        mel_low_scale = 2595 * np.log10(1 + self.mel_freq_low / 700)
+        mel_high_scale = 2595 * np.log10(1 + self.mel_freq_high / 700)
+        self.mel_img = self.ax_mel.imshow(np.zeros((100, self.mel_banks)), aspect='auto', 
+                                          origin='lower', cmap=self.mel_colormap,
+                                          extent=[self.mel_freq_low, self.mel_freq_high, 0, 100])
         self.ax_mel.set_title('Mel Spectrogram', fontsize=10)
-        self.ax_mel.set_ylabel('Time')
+        self.ax_mel.set_yticks([])
         
         self.bars = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
@@ -139,7 +143,11 @@ class AudioVisualizer:
         
         mel_data = np.roll(self.mel_img.get_array(), 1, axis=0)
         mel_array = np.array(mel_energies)
-        mel_normalized = (mel_array - np.min(mel_array)) / (np.max(mel_array) - np.min(mel_array) + 1e-10)
+        
+        noise_floor = np.percentile(mel_array, self.mel_noise_floor)
+        mel_array_clean = np.maximum(mel_array - noise_floor, 0)
+        
+        mel_normalized = (mel_array_clean - np.min(mel_array_clean)) / (np.max(mel_array_clean) - np.min(mel_array_clean) + 1e-10)
         mel_normalized = np.clip(mel_normalized, 0, 1)
         mel_data[0, :] = mel_normalized
         self.mel_img.set_data(mel_data)
