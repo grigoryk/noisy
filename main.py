@@ -2,19 +2,48 @@
 
 import numpy as np
 import sounddevice as sd
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 
-def analyze(audio_data, sample_rate):
-    audio_bytes = audio_data.tobytes()
-    print(f"Received {len(audio_bytes)} bytes | Shape: {audio_data.shape} | Sample rate: {sample_rate} Hz")
-    print(f"First 32 bytes: {audio_bytes[:32].hex()}")
-
-
-def audio_callback(indata, frames, time, status):
-    if status:
-        print(f"Status: {status}")
+class AudioVisualizer:
+    def __init__(self, sample_rate, num_bins=100):
+        self.sample_rate = sample_rate
+        self.num_bins = num_bins
+        self.audio_buffer = None
+        
+        plt.style.use('dark_background')
+        self.fig, self.ax = plt.subplots(figsize=(12, 6))
+        self.line, = self.ax.plot([], [], lw=2)
+        
+        self.ax.set_xlim(0, sample_rate // 2)
+        self.ax.set_ylim(0, 1)
+        self.ax.set_xlabel('Frequency (Hz)')
+        self.ax.set_ylabel('Magnitude')
+        self.ax.set_title('Real-time FFT')
     
-    analyze(indata.copy(), frames)
+    def update(self, frame):
+        if self.audio_buffer is None:
+            return self.line,
+        
+        fft = np.fft.rfft(self.audio_buffer)
+        magnitude = np.abs(fft)
+        magnitude = magnitude / np.max(magnitude) if np.max(magnitude) > 0 else magnitude
+        
+        freqs = np.fft.rfftfreq(len(self.audio_buffer), 1/self.sample_rate)
+        
+        self.line.set_data(freqs, magnitude)
+        return self.line,
+    
+    def audio_callback(self, indata, frames, time, status):
+        if status:
+            print(f"Status: {status}")
+        self.audio_buffer = indata[:, 0].copy()
+    
+    def run(self, device_id):
+        with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
+            ani = FuncAnimation(self.fig, self.update, interval=50, blit=True)
+            plt.show()
 
 
 def main():
@@ -46,11 +75,10 @@ def main():
 
         print(f"\nStarting audio capture from: {device_info['name']}")
         print(f"Sample rate: {sample_rate} Hz")
-        print("Press Ctrl+C to stop")
         print("="*60 + "\n")
         
-        with sd.InputStream(device=device_id, callback=audio_callback, channels=1, samplerate=sample_rate):
-            sd.sleep(-1)
+        visualizer = AudioVisualizer(sample_rate)
+        visualizer.run(device_id)
     except KeyboardInterrupt:
         print("\nStopped audio capture")
     except Exception as e:
