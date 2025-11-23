@@ -10,6 +10,9 @@ from scipy.signal import butter, sosfilt
 
 class AudioVisualizer:
     def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
+        # Performance tuning
+        self.update_interval_ms = 60  # milliseconds between frames (lower = higher FPS, more CPU)
+        
         # Waveform tuning
         self.waveform_zoom = 10 # how much padding around signal (higher = more padding, less jumpy)
         self.ylim_history_size = 8  # how quickly zoom adjusts to loudness changes (higher = slower)
@@ -66,6 +69,9 @@ class AudioVisualizer:
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
         self.voice_noise_floor_history = []
+        
+        # Pre-compute mel filter bank to avoid recalculating every frame
+        self._setup_mel_filterbank()
         
         self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
 
@@ -187,12 +193,14 @@ class AudioVisualizer:
         data_normalized = (data_clean - np.min(data_clean)) / (np.max(data_clean) - np.min(data_clean) + 1e-10)
         return np.clip(data_normalized, 0, 1)
     
-    def update_spectrogram(self, freqs, magnitude_db):
-        # Use mel-scale bins for perceptually meaningful frequency spacing
+    def _setup_mel_filterbank(self):
         mel_low = 2595 * np.log10(1 + self.mel_freq_low / 700)
         mel_high = 2595 * np.log10(1 + self.mel_freq_high / 700)
         mel_points = np.linspace(mel_low, mel_high, self.mel_banks + 2)
-        hz_points = 700 * (10**(mel_points / 2595) - 1)
+        self.mel_hz_points = 700 * (10**(mel_points / 2595) - 1)
+    
+    def update_spectrogram(self, freqs, magnitude_db):
+        hz_points = self.mel_hz_points
         
         # Calculate energy in each mel-spaced frequency band
         mel_energies = []
@@ -253,9 +261,9 @@ class AudioVisualizer:
         
         # Update polar bar chart
         if self.voice_bars:
-            for bar, height in zip(self.voice_bars, bin_magnitudes):
+            # Batch update heights and colors
+            for bar, height, color in zip(self.voice_bars, bin_magnitudes, colors):
                 bar.set_height(height)
-            for bar, color in zip(self.voice_bars, colors):
                 bar.set_color(color)
         else:
             self.voice_bars = self.ax_voice_bars.bar(theta, bin_magnitudes, width=width, color=colors, alpha=0.8)
@@ -273,24 +281,19 @@ class AudioVisualizer:
             baseline = np.percentile(bin_magnitudes, self.bands_baseline_percentile)
             bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
         
-        bin_magnitudes = bin_magnitudes.tolist()
-        
         if self.prev_bin_magnitudes is not None:
-            bin_magnitudes = [
-                self.bands_smoothing * prev + (1 - self.bands_smoothing) * curr
-                for prev, curr in zip(self.prev_bin_magnitudes, bin_magnitudes)
-            ]
+            bin_magnitudes = self.bands_smoothing * self.prev_bin_magnitudes + (1 - self.bands_smoothing) * bin_magnitudes
         self.prev_bin_magnitudes = bin_magnitudes
         
         bin_widths = bin_edges[1] - bin_edges[0]
         
-        normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
+        normalized = np.clip(bin_magnitudes / self.bands_magnitude_scale, 0, 1)
         colors = self.bands_colormap(normalized)
         
         if self.bars:
-            for bar, height in zip(self.bars, bin_magnitudes):
+            # Batch update heights and colors (more efficient than loop)
+            for bar, height, color in zip(self.bars, bin_magnitudes, colors):
                 bar.set_height(height)
-            for bar, color in zip(self.bars, colors):
                 bar.set_color(color)
         else:
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
@@ -334,7 +337,7 @@ class AudioVisualizer:
         with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
             manager = plt.get_current_fig_manager()
             manager.full_screen_toggle()
-            ani = FuncAnimation(self.fig, self.update, interval=50, blit=False, cache_frame_data=False)
+            ani = FuncAnimation(self.fig, self.update, interval=self.update_interval_ms, blit=False, cache_frame_data=False)
             plt.show()
 
 
