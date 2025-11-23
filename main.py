@@ -26,14 +26,11 @@ class AudioVisualizer:
         # Voice frequency bands tuning
         self.voice_num_bins = 30  # bars for voice range
         self.voice_max_freq = 1000  # focus on fundamental voice frequencies (Hz)
-        self.voice_baseline_percentile = 10  # remove noise floor but keep speech visible
-        self.voice_magnitude_offset = 60  # moderate boost for visibility
         self.voice_noise_threshold = 15  # dB above noise floor to show a point
         self.voice_noise_history_size = 50  # frames to track for noise floor estimation
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
-        self.spectrogram_height = 50  # vertical resolution (time bins)
         self.spectrogram_noise_floor = 30  # percentile for noise removal (higher = more aggressive)
         self.spectrogram_power = 1.5  # contrast enhancement (higher = more contrast)
         
@@ -59,7 +56,6 @@ class AudioVisualizer:
         self.waveform_alpha = 0.9  # opacity of waveform line
         # Create custom colormaps from palette for all visualizations
         self.spectrogram_colormap = LinearSegmentedColormap.from_list('purple_spec', self.palette)
-        self.mel_colormap = LinearSegmentedColormap.from_list('purple_mel', self.palette)
         self.bands_colormap = LinearSegmentedColormap.from_list('purple_bands', self.palette)
         
         self.sample_rate = sample_rate
@@ -299,7 +295,7 @@ class AudioVisualizer:
         else:
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
     
-    def update(self, frame):
+    def update(self, _frame):
         if self.audio_buffer is None:
             return []
         
@@ -327,7 +323,7 @@ class AudioVisualizer:
         
         return []
     
-    def audio_callback(self, indata, frames, time, status):
+    def audio_callback(self, indata, _frames, _time, status):
         if status:
             print(f"Status: {status}")
         
