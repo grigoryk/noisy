@@ -4,6 +4,7 @@ import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import LinearSegmentedColormap
 from scipy.signal import butter, sosfilt
 
 
@@ -29,20 +30,25 @@ class AudioVisualizer:
         self.spectrogram_power = 1.5  # contrast enhancement (higher = more contrast)
         
         # Mel spectrogram tuning
-        self.mel_banks = 20  # number of frequency bands
-        self.mel_freq_low = 2000  # lowest frequency (Hz)
-        self.mel_freq_high = 5000  # highest frequency (Hz)
+        self.mel_banks = 40  # number of frequency bands
+        self.mel_freq_low = 80  # lowest frequency (Hz) - captures voice fundamentals
+        self.mel_freq_high = 8000  # highest frequency (Hz) - captures consonants
         self.mel_noise_floor = 30  # percentile for noise removal (higher = cleaner)
         
         # Audio processing
         self.highpass_freq = highpass_freq  # filters out frequencies below this (Hz)
         self.smoothing = smoothing  # how much to smooth FFT data between frames (higher = smoother)
         
-        # Visual styling
-        self.waveform_color = 'cyan'
+        # Visual styling - vibrant purple palette
+        self.background_color = '#0a1628'  # deep navy
+        self.palette = ['#E354CA', '#9354E3', '#C254E3', '#513EE6', '#E60E3F', '#D074EB']
+        self.waveform_color = '#E354CA'  # bright magenta
+        self.border_color = '#D074EB'  # light purple for borders
+        self.text_color = '#C254E3'  # medium purple for text
         self.spectrogram_colormap = 'inferno'
         self.mel_colormap = 'viridis'
-        self.bands_colormap = 'plasma'
+        # Create custom colormap from palette
+        self.bands_colormap = LinearSegmentedColormap.from_list('custom_purple', self.palette)
         
         self.sample_rate = sample_rate
         self.audio_buffer = None
@@ -53,17 +59,20 @@ class AudioVisualizer:
         
         self.sos = butter(4, highpass_freq, btype='high', fs=sample_rate, output='sos')
 
-        plt.style.use('dark_background')
         plt.rcParams['toolbar'] = 'None'
-        self.fig = plt.figure(figsize=(16, 9))
-        self.fig.subplots_adjust(left=0.05, right=0.98, top=0.95, bottom=0.05)
+        plt.rcParams['text.color'] = self.text_color
+        plt.rcParams['axes.labelcolor'] = self.text_color
+        plt.rcParams['xtick.color'] = self.border_color
+        plt.rcParams['ytick.color'] = self.border_color
+        self.fig = plt.figure(figsize=(16, 9), facecolor=self.background_color)
+        self.fig.subplots_adjust(left=0.06, right=0.97, top=0.94, bottom=0.06)
         
-        gs = self.fig.add_gridspec(3, 4, height_ratios=[1, 1, 1.5], hspace=0.15, wspace=0.15)
+        gs = self.fig.add_gridspec(3, 4, height_ratios=[1, 1, 1.5], hspace=0.2, wspace=0.2)
         
-        self.ax_mel = self.fig.add_subplot(gs[0, 0:2])
-        self.ax_spectrogram = self.fig.add_subplot(gs[0, 2:4])
-        self.ax_wave = self.fig.add_subplot(gs[1, :])
-        self.ax_bars = self.fig.add_subplot(gs[2, :])
+        self.ax_mel = self.fig.add_subplot(gs[0, 0:2], facecolor=self.background_color)
+        self.ax_spectrogram = self.fig.add_subplot(gs[0, 2:4], facecolor=self.background_color)
+        self.ax_wave = self.fig.add_subplot(gs[1, :], facecolor=self.background_color)
+        self.ax_bars = self.fig.add_subplot(gs[2, :], facecolor=self.background_color)
         
         self.setup_waveform()
         self.setup_spectrogram()
@@ -71,31 +80,47 @@ class AudioVisualizer:
         self.setup_frequency_bands()
     
     def setup_waveform(self):
-        self.line_wave, = self.ax_wave.plot([], [], lw=1, color=self.waveform_color)
+        self.line_wave, = self.ax_wave.plot([], [], lw=1.5, color=self.waveform_color, alpha=0.9)
         self.ax_wave.set_ylim(-1, 1)
-        self.ax_wave.set_title('Waveform', fontsize=10)
+        self.ax_wave.set_title('Waveform', fontsize=10, color=self.text_color, pad=12)
+        for spine in self.ax_wave.spines.values():
+            spine.set_color(self.border_color)
+            spine.set_linewidth(0.5)
+            spine.set_alpha(0.3)
     
     def setup_spectrogram(self):
         self.spectrogram_data = np.zeros((100, self.spectrogram_height))
         self.spectrogram_img = self.ax_spectrogram.imshow(self.spectrogram_data, 
                                                            aspect='auto', origin='lower',
                                                            cmap=self.spectrogram_colormap, extent=[0, self.spectrogram_max_freq, 0, 100])
-        self.ax_spectrogram.set_title('Spectrogram', fontsize=10)
+        self.ax_spectrogram.set_title('Spectrogram', fontsize=10, color=self.text_color, pad=12)
         self.ax_spectrogram.set_yticks([])
+        for spine in self.ax_spectrogram.spines.values():
+            spine.set_color(self.border_color)
+            spine.set_linewidth(0.5)
+            spine.set_alpha(0.3)
     
     def setup_mel(self):
         self.mel_img = self.ax_mel.imshow(np.zeros((100, self.mel_banks)), aspect='auto', 
                                           origin='lower', cmap=self.mel_colormap,
                                           extent=[self.mel_freq_low, self.mel_freq_high, 0, 100])
-        self.ax_mel.set_title('Mel Spectrogram', fontsize=10)
+        self.ax_mel.set_title('Mel Spectrogram', fontsize=10, color=self.text_color, pad=12)
         self.ax_mel.set_yticks([])
+        for spine in self.ax_mel.spines.values():
+            spine.set_color(self.border_color)
+            spine.set_linewidth(0.5)
+            spine.set_alpha(0.3)
     
     def setup_frequency_bands(self):
         self.bars = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
-        self.ax_bars.set_ylabel('Magnitude (dB)')
-        self.ax_bars.set_title('Frequency Bands', fontsize=10)
+        self.ax_bars.set_ylabel('Magnitude (dB)', color=self.text_color)
+        self.ax_bars.set_title('Frequency Bands', fontsize=10, color=self.text_color, pad=12)
         self.ax_bars.set_ylim(16, 100)
+        for spine in self.ax_bars.spines.values():
+            spine.set_color(self.border_color)
+            spine.set_linewidth(0.5)
+            spine.set_alpha(0.3)
     
     def update_waveform(self):
         self.line_wave.set_data(np.arange(len(self.audio_buffer)), self.audio_buffer)
@@ -167,17 +192,17 @@ class AudioVisualizer:
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
         bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
-        bin_magnitudes = []
-        for i in range(self.num_bins):
-            mask = (visible_freqs >= bin_edges[i]) & (visible_freqs < bin_edges[i+1])
-            if np.any(mask):
-                bin_magnitudes.append(np.max(visible_magnitude[mask]) + self.bands_magnitude_offset)
-            else:
-                bin_magnitudes.append(0)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Interpolate magnitude values at bin centers for smooth visualization
+        bin_magnitudes = np.interp(bin_centers, visible_freqs, visible_magnitude) + self.bands_magnitude_offset
         
         # Remove baseline noise and apply smoothing
-        baseline = np.percentile(bin_magnitudes, self.bands_baseline_percentile)
-        bin_magnitudes = [max(m - baseline, 0) for m in bin_magnitudes]
+        if self.bands_baseline_percentile > 0:
+            baseline = np.percentile(bin_magnitudes, self.bands_baseline_percentile)
+            bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
+        
+        bin_magnitudes = bin_magnitudes.tolist()
         
         if self.prev_bin_magnitudes is not None:
             bin_magnitudes = [
@@ -186,7 +211,6 @@ class AudioVisualizer:
             ]
         self.prev_bin_magnitudes = bin_magnitudes
         
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         bin_widths = bin_edges[1] - bin_edges[0]
         
         normalized = np.clip(np.array(bin_magnitudes) / self.bands_magnitude_scale, 0, 1)
