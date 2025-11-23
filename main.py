@@ -24,7 +24,7 @@ class AudioVisualizer:
         self.bands_smoothing = 0.7  # how smooth bar transitions are (higher = smoother)
         
         # Spectrogram tuning
-        self.spectrogram_max_freq = 5000  # max frequency to display (Hz)
+        self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
         self.spectrogram_height = 50  # vertical resolution (time bins)
         self.spectrogram_noise_floor = 30  # percentile for noise removal (higher = more aggressive)
         self.spectrogram_power = 1.5  # contrast enhancement (higher = more contrast)
@@ -41,14 +41,18 @@ class AudioVisualizer:
         
         # Visual styling - vibrant purple palette
         self.background_color = '#0a1628'  # deep navy
-        self.palette = ['#E354CA', '#9354E3', '#C254E3', '#513EE6', '#E60E3F', '#D074EB']
+        self.palette = ['#0a1628', '#513EE6', '#9354E3', '#C254E3', '#E354CA', '#E60E3F']
         self.waveform_color = '#E354CA'  # bright magenta
         self.border_color = '#D074EB'  # light purple for borders
         self.text_color = '#C254E3'  # medium purple for text
-        self.spectrogram_colormap = 'inferno'
-        self.mel_colormap = 'viridis'
-        # Create custom colormap from palette
-        self.bands_colormap = LinearSegmentedColormap.from_list('custom_purple', self.palette)
+        self.label_alpha = 0.35  # opacity for all axis labels and ticks (lower = more faint)
+        self.label_fontsize = 8  # font size for tick labels
+        self.waveform_linewidth = 1.5  # thickness of waveform line
+        self.waveform_alpha = 0.9  # opacity of waveform line
+        # Create custom colormaps from palette for all visualizations
+        self.spectrogram_colormap = LinearSegmentedColormap.from_list('purple_spec', self.palette)
+        self.mel_colormap = LinearSegmentedColormap.from_list('purple_mel', self.palette)
+        self.bands_colormap = LinearSegmentedColormap.from_list('purple_bands', self.palette)
         
         self.sample_rate = sample_rate
         self.audio_buffer = None
@@ -67,60 +71,62 @@ class AudioVisualizer:
         self.fig = plt.figure(figsize=(16, 9), facecolor=self.background_color)
         self.fig.subplots_adjust(left=0.06, right=0.97, top=0.94, bottom=0.06)
         
-        gs = self.fig.add_gridspec(3, 4, height_ratios=[1, 1, 1.5], hspace=0.2, wspace=0.2)
+        gs = self.fig.add_gridspec(3, 1, height_ratios=[1.5, 1, 1.5], hspace=0.2)
         
-        self.ax_mel = self.fig.add_subplot(gs[0, 0:2], facecolor=self.background_color)
-        self.ax_spectrogram = self.fig.add_subplot(gs[0, 2:4], facecolor=self.background_color)
-        self.ax_wave = self.fig.add_subplot(gs[1, :], facecolor=self.background_color)
-        self.ax_bars = self.fig.add_subplot(gs[2, :], facecolor=self.background_color)
+        self.ax_spectrogram = self.fig.add_subplot(gs[0], facecolor=self.background_color)
+        self.ax_wave = self.fig.add_subplot(gs[1], facecolor=self.background_color)
+        self.ax_bars = self.fig.add_subplot(gs[2], facecolor=self.background_color)
         
         self.setup_waveform()
         self.setup_spectrogram()
-        self.setup_mel()
         self.setup_frequency_bands()
     
     def setup_waveform(self):
-        self.line_wave, = self.ax_wave.plot([], [], lw=1.5, color=self.waveform_color, alpha=0.9)
+        self.line_wave, = self.ax_wave.plot([], [], lw=self.waveform_linewidth, color=self.waveform_color, alpha=self.waveform_alpha)
         self.ax_wave.set_ylim(-1, 1)
-        self.ax_wave.set_title('Waveform', fontsize=10, color=self.text_color, pad=12)
+        self.ax_wave.set_xticks([])
+        
+        # Add scale text indicator
+        self.scale_text = self.ax_wave.text(0.02, 0.95, '', transform=self.ax_wave.transAxes,
+                                           verticalalignment='top', fontsize=self.label_fontsize,
+                                           color=self.text_color, alpha=0.6,
+                                           bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color, 
+                                                    edgecolor=self.border_color, alpha=0.3))
+        
         for spine in self.ax_wave.spines.values():
-            spine.set_color(self.border_color)
-            spine.set_linewidth(0.5)
-            spine.set_alpha(0.3)
+            spine.set_visible(False)
+        self.ax_wave.tick_params(axis='y', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+        for label in self.ax_wave.get_yticklabels():
+            label.set_alpha(self.label_alpha)
     
     def setup_spectrogram(self):
-        self.spectrogram_data = np.zeros((100, self.spectrogram_height))
+        # Use mel-scale frequency bins for perceptually meaningful spacing
+        self.spectrogram_data = np.zeros((100, self.mel_banks))
         self.spectrogram_img = self.ax_spectrogram.imshow(self.spectrogram_data, 
                                                            aspect='auto', origin='lower',
                                                            cmap=self.spectrogram_colormap, extent=[0, self.spectrogram_max_freq, 0, 100])
-        self.ax_spectrogram.set_title('Spectrogram', fontsize=10, color=self.text_color, pad=12)
         self.ax_spectrogram.set_yticks([])
+        # Show logarithmically-spaced Hz labels
+        self.ax_spectrogram.set_xticks([100, 200, 500, 1000, 2000, 4000, 8000])
+        self.ax_spectrogram.xaxis.tick_top()
+        self.ax_spectrogram.xaxis.set_label_position('top')
         for spine in self.ax_spectrogram.spines.values():
-            spine.set_color(self.border_color)
-            spine.set_linewidth(0.5)
-            spine.set_alpha(0.3)
-    
-    def setup_mel(self):
-        self.mel_img = self.ax_mel.imshow(np.zeros((100, self.mel_banks)), aspect='auto', 
-                                          origin='lower', cmap=self.mel_colormap,
-                                          extent=[self.mel_freq_low, self.mel_freq_high, 0, 100])
-        self.ax_mel.set_title('Mel Spectrogram', fontsize=10, color=self.text_color, pad=12)
-        self.ax_mel.set_yticks([])
-        for spine in self.ax_mel.spines.values():
-            spine.set_color(self.border_color)
-            spine.set_linewidth(0.5)
-            spine.set_alpha(0.3)
+            spine.set_visible(False)
+        self.ax_spectrogram.tick_params(axis='x', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+        for label in self.ax_spectrogram.get_xticklabels():
+            label.set_alpha(self.label_alpha)
     
     def setup_frequency_bands(self):
         self.bars = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
-        self.ax_bars.set_ylabel('Magnitude (dB)', color=self.text_color)
-        self.ax_bars.set_title('Frequency Bands', fontsize=10, color=self.text_color, pad=12)
+        ylabel = self.ax_bars.set_ylabel('Magnitude (dB)', color=self.text_color)
+        ylabel.set_alpha(self.label_alpha)
         self.ax_bars.set_ylim(16, 100)
         for spine in self.ax_bars.spines.values():
-            spine.set_color(self.border_color)
-            spine.set_linewidth(0.5)
-            spine.set_alpha(0.3)
+            spine.set_visible(False)
+        self.ax_bars.tick_params(axis='both', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+        for label in self.ax_bars.get_xticklabels() + self.ax_bars.get_yticklabels():
+            label.set_alpha(self.label_alpha)
     
     def update_waveform(self):
         self.line_wave.set_data(np.arange(len(self.audio_buffer)), self.audio_buffer)
@@ -142,6 +148,9 @@ class AudioVisualizer:
                 ylim = avg_ylim
             self.prev_ylim = ylim
             self.ax_wave.set_ylim(-ylim, ylim)
+            
+            # Update scale indicator text
+            self.scale_text.set_text(f'±{ylim:.3f}')
     
     def _normalize_magnitude(self, data, noise_floor_percentile):
         """Remove noise floor and normalize magnitude data to 0-1 range."""
@@ -151,22 +160,7 @@ class AudioVisualizer:
         return np.clip(data_normalized, 0, 1)
     
     def update_spectrogram(self, freqs, magnitude_db):
-        # Filter to display range and normalize with noise reduction
-        spectrogram_mask = freqs <= self.spectrogram_max_freq
-        spectrogram_magnitude = magnitude_db[spectrogram_mask]
-        
-        if len(spectrogram_magnitude) > 0:
-            spectrogram_magnitude_normalized = self._normalize_magnitude(spectrogram_magnitude, self.spectrogram_noise_floor)
-            spectrogram_magnitude_normalized = np.power(spectrogram_magnitude_normalized, self.spectrogram_power)
-            
-            self.spectrogram_data = np.roll(self.spectrogram_data, 1, axis=0)
-            self.spectrogram_data[0, :] = np.interp(np.linspace(0, len(spectrogram_magnitude_normalized)-1, self.spectrogram_height), 
-                                                       np.arange(len(spectrogram_magnitude_normalized)), spectrogram_magnitude_normalized)
-            self.spectrogram_img.set_data(self.spectrogram_data)
-            self.spectrogram_img.set_clim(0, 1)
-    
-    def update_mel(self, freqs, magnitude):
-        # Convert frequency range to mel scale and create filter bank points
+        # Use mel-scale bins for perceptually meaningful frequency spacing
         mel_low = 2595 * np.log10(1 + self.mel_freq_low / 700)
         mel_high = 2595 * np.log10(1 + self.mel_freq_high / 700)
         mel_points = np.linspace(mel_low, mel_high, self.mel_banks + 2)
@@ -177,17 +171,18 @@ class AudioVisualizer:
         for i in range(self.mel_banks):
             mask = (freqs >= hz_points[i]) & (freqs < hz_points[i+2])
             if np.any(mask):
-                mel_energies.append(np.mean(magnitude[mask]))
+                mel_energies.append(np.mean(magnitude_db[mask]))
             else:
-                mel_energies.append(1e-10)
+                mel_energies.append(-100)  # Very low dB value for empty bins
         
-        mel_spectrogram_data = np.roll(self.mel_img.get_array(), 1, axis=0)
         mel_magnitude = np.array(mel_energies)
+        mel_normalized = self._normalize_magnitude(mel_magnitude, self.spectrogram_noise_floor)
+        mel_normalized = np.power(mel_normalized, self.spectrogram_power)
         
-        mel_normalized = self._normalize_magnitude(mel_magnitude, self.mel_noise_floor)
-        mel_spectrogram_data[0, :] = mel_normalized
-        self.mel_img.set_data(mel_spectrogram_data)
-        self.mel_img.set_clim(0, 1)
+        self.spectrogram_data = np.roll(self.spectrogram_data, 1, axis=0)
+        self.spectrogram_data[0, :] = mel_normalized
+        self.spectrogram_img.set_data(self.spectrogram_data)
+        self.spectrogram_img.set_clim(0, 1)
     
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
@@ -248,7 +243,6 @@ class AudioVisualizer:
         
         self.update_waveform()
         self.update_spectrogram(freqs, magnitude_db)
-        self.update_mel(freqs, magnitude)
         self.update_frequency_bands(visible_freqs, visible_magnitude)
         
         return []
@@ -264,7 +258,7 @@ class AudioVisualizer:
         with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
             manager = plt.get_current_fig_manager()
             manager.full_screen_toggle()
-            ani = FuncAnimation(self.fig, self.update, interval=50, blit=False)
+            ani = FuncAnimation(self.fig, self.update, interval=50, blit=False, cache_frame_data=False)
             plt.show()
 
 
