@@ -8,6 +8,16 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 
+def terminate_process(process, timeout=2):
+    """Terminate a subprocess gracefully or forcefully if needed."""
+    if process:
+        process.terminate()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
 class ReloadHandler(FileSystemEventHandler):
     def __init__(self, script_path):
         self.script_path = script_path
@@ -17,11 +27,7 @@ class ReloadHandler(FileSystemEventHandler):
     def restart(self):
         if self.process:
             print("\n🔄 Reloading...")
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+            terminate_process(self.process)
         
         print(f"▶️  Starting {self.script_path.name}")
         self.process = subprocess.Popen([sys.executable, str(self.script_path)])
@@ -53,12 +59,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\n⏹️  Stopping...")
         observer.stop()
-        if handler.process:
-            handler.process.terminate()
-            try:
-                handler.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                handler.process.kill()
+        terminate_process(handler.process)
     
     observer.join()
     print("✅ Stopped")
