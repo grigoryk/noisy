@@ -47,7 +47,7 @@ class AudioVisualizer:
         self.voice_num_bins = 30  # bars for voice range
         self.voice_max_freq = 2000  # focus on fundamental voice frequencies (Hz)
         self.voice_noise_threshold = 8  # dB above noise floor to show (lower = more detail)
-        self.voice_noise_history_size = 1  # frames to track for noise floor estimation
+        self.voice_noise_history_size = 45  # frames to track for noise floor estimation
         self.voice_amplification = 1.6  # amplify voice magnitudes for visibility
         self.voice_radius_base = 15
         self.voice_radius_max = 60
@@ -95,7 +95,7 @@ class AudioVisualizer:
         self.prev_bin_magnitudes = None
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
-        self.voice_noise_floor_history = []
+        self.voice_noise_history_frames = []
         self.bands_noise_floor_history = []
         self.voice_bar_colors = None
         self.voice_bar_heights = None
@@ -286,6 +286,8 @@ class AudioVisualizer:
             ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider),
             ('Wave Fade', 0.0, 0.99, self.waveform_fade_decay, 0.01, self._on_waveform_fade_slider),
             ('Voice Gain', 0.5, 3.0, self.voice_amplification, 0.05, self._on_voice_gain_slider),
+            ('Voice Noise Frames', 5, 90, self.voice_noise_history_size, 1, self._on_voice_noise_history_slider),
+            ('Voice Threshold', 0.0, 18.0, self.voice_noise_threshold, 0.5, self._on_voice_threshold_slider),
             ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider),
         ]
         self.tuning_sliders = []
@@ -365,7 +367,19 @@ class AudioVisualizer:
         self.voice_amplification = max(0.1, float(value))
         self.prev_voice_bin_magnitudes = None
         self.should_update_colors = True
-        self.voice_noise_floor_history.clear()
+        self.voice_noise_history_frames.clear()
+
+    def _on_voice_noise_history_slider(self, value):
+        new_size = max(1, int(round(value)))
+        if new_size == self.voice_noise_history_size:
+            return
+        self.voice_noise_history_size = new_size
+        if len(self.voice_noise_history_frames) > new_size:
+            self.voice_noise_history_frames = self.voice_noise_history_frames[-new_size:]
+        self.prev_voice_bin_magnitudes = None
+
+    def _on_voice_threshold_slider(self, value):
+        self.voice_noise_threshold = max(0.0, float(value))
 
     def _on_spectrogram_bins_slider(self, value):
         new_min = max(1, int(round(value)))
@@ -609,21 +623,22 @@ class AudioVisualizer:
         voice_freqs = visible_freqs[voice_mask]
         voice_magnitude = visible_magnitude[voice_mask]
         
-        # Track noise floor over time (use lower percentile to be less aggressive)
-        current_noise_floor = self._fast_percentile(voice_magnitude, 10)
-        self.voice_noise_floor_history.append(current_noise_floor)
-        if len(self.voice_noise_floor_history) > self.voice_noise_history_size:
-            self.voice_noise_floor_history.pop(0)
-        
-        # Calculate adaptive noise floor (average over history)
-        adaptive_noise_floor = np.mean(self.voice_noise_floor_history)
-        
-        # Interpolate magnitude at bin centers and amplify for better visibility
-        bin_magnitudes = (np.interp(self.voice_bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor) * self.voice_amplification
-        
-        # Filter out bins below threshold (reduced for more detail)
-        threshold = self.voice_noise_threshold
-        bin_magnitudes = np.maximum(bin_magnitudes - threshold, 0)
+        # Interpolate magnitude at bin centers for noise tracking
+        bin_inputs = np.interp(self.voice_bin_centers, voice_freqs, voice_magnitude)
+        self.voice_noise_history_frames.append(bin_inputs)
+        if len(self.voice_noise_history_frames) > self.voice_noise_history_size:
+            self.voice_noise_history_frames.pop(0)
+
+        if len(self.voice_noise_history_frames) >= 5:
+            history_matrix = np.vstack(self.voice_noise_history_frames)
+            per_bin_noise = np.percentile(history_matrix, 25, axis=0)
+        else:
+            percentile_value = np.percentile(bin_inputs, 10, axis=None)
+            per_bin_noise = np.full_like(bin_inputs, percentile_value)
+
+        per_bin_noise = np.minimum(per_bin_noise, bin_inputs)
+        signal_above_noise = bin_inputs - per_bin_noise - self.voice_noise_threshold
+        bin_magnitudes = np.maximum(signal_above_noise, 0) * self.voice_amplification
         
         # Smooth the data
         if self.prev_voice_bin_magnitudes is not None:

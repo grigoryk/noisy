@@ -40,9 +40,10 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - **Polar bar chart** showing 0-2000 Hz fundamentals
 - 30 bins arranged radially around circle
 - **Adaptive noise filtering**:
-   - Uses 10th percentile per-frame noise estimate (history size = 1)
-   - Displays bins only when they exceed noise floor by 8 dB
-   - Bars are amplified ×`voice_amplification` (default 1.6, slider-controlled) before thresholding
+ - **Adaptive noise filtering**:
+   - Interpolates each frame at 30 bin centers and stores up to 45 frames of history per bin
+   - Uses the per-bin 25th-percentile baseline after at least 5 frames; before then it falls back to the frame’s 10th-percentile floor
+   - Displays bins only when they clear the baseline by 8 dB and then multiplies by the voice gain slider (default 1.6)
 - Radial offset keeps bars between 15 and 60 units from center so even subtle activity remains visible
 - Minimal labels: 4 frequency markers (250, 500, 750, 1000 Hz)
 - 3 magnitude markers (30, 45, 60 dB)
@@ -58,7 +59,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 
 #### 5. Tuning Controls (Right Panel)
 - Hide/Show button toggles the entire panel
-- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Spectro Bins, Spectro Hz Range
+- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, Spectro Bins, Spectro Hz Range
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
 
 ### Configuration Variables (Extracted)
@@ -68,7 +69,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `waveform_alpha = 0.9` - waveform line opacity
 - `waveform_fade_decay = 0.0` - slider-adjustable waveform trail decay factor
 - `voice_noise_threshold = 8` - dB above noise floor to display
-- `voice_noise_history_size = 1` - frames for noise tracking
+- `voice_noise_history_size = 45` - frames stored per bin for percentile-based noise tracking
 - `voice_amplification = 1.6` - multiplier to boost polar bars (tunable via UI)
 - `bands_baseline_percentile = 35` - dynamic noise floor percentile for full-range bars
 - `bands_noise_history_size = 4` - frames to average baseline
@@ -99,12 +100,17 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 
 ### Adaptive Noise Detection (Voice Chart)
 ```python
-# Track 10th percentile as noise floor each frame
-current_noise_floor = np.percentile(voice_magnitude, 10)
-# Average over recent history (currently size 1)
-adaptive_noise_floor = np.mean(history)
-# Keep bins 8 dB above threshold after amplification
-threshold = adaptive_noise_floor + 8
+bin_inputs = np.interp(voice_bin_centers, voice_freqs, voice_magnitude)
+voice_history.append(bin_inputs)
+voice_history = voice_history[-45:]
+
+if len(voice_history) >= 5:
+   per_bin_baseline = np.percentile(np.vstack(voice_history), 25, axis=0)
+else:
+   per_bin_baseline = np.percentile(bin_inputs, 10)
+
+signal = np.maximum(bin_inputs - per_bin_baseline - 8, 0)
+bars = signal * voice_amplification
 ```
 
 ## Recent Changes (Session History)
@@ -133,6 +139,9 @@ threshold = adaptive_noise_floor + 8
 19. Removed the unused `mel_noise_floor` setting and redundant cache resets in the setup helpers to reduce clutter without changing behavior
 20. Added a Voice Gain slider that adjusts `voice_amplification` so polar bars can be boosted or tamed live
 21. Added waveform trails plus a Wave Fade slider so previous frames linger and fade smoothly
+22. Reworked the voice polar chart to track per-bin percentile noise floors (45-frame history) so ambient noise stays suppressed
+23. Updated README and this document to describe the per-bin voice noise logic and slider-clearing behavior
+24. Added tuning sliders for `voice_noise_history_size` and `voice_noise_threshold` so ambient suppression can be adjusted live
 
 ## File Structure
 ```
