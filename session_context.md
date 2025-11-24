@@ -35,14 +35,15 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Scale indicator shows current zoom level
 
 #### 3. Voice Polar Chart (NEW)
-- **Polar bar chart** showing 0-1000 Hz in circular layout
+- **Polar bar chart** showing 0-2000 Hz fundamentals
 - 30 bins arranged radially around circle
-- **Adaptive noise filtering**: 
-  - Tracks noise floor over 50 frames
-  - Only shows bars 15 dB above adaptive threshold
-  - Removes background noise automatically
+- **Adaptive noise filtering**:
+   - Uses 10th percentile per-frame noise estimate (history size = 1)
+   - Displays bins only when they exceed noise floor by 8 dB
+   - Bars are amplified ×1.6 before thresholding
+- Radial offset keeps bars between 15 and 60 units from center so even subtle activity remains visible
 - Minimal labels: 4 frequency markers (250, 500, 750, 1000 Hz)
-- 3 magnitude markers (20, 40, 60 dB)
+- 3 magnitude markers (30, 45, 60 dB)
 - Starts at top (12 o'clock), goes clockwise
 
 #### 4. Full Range Frequency Bars
@@ -56,8 +57,8 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `label_fontsize = 8` - font size for labels
 - `waveform_linewidth = 1.5` - waveform line thickness
 - `waveform_alpha = 0.9` - waveform line opacity
-- `voice_noise_threshold = 15` - dB above noise floor to display
-- `voice_noise_history_size = 50` - frames for noise tracking
+- `voice_noise_threshold = 8` - dB above noise floor to display
+- `voice_noise_history_size = 1` - frames for noise tracking
 
 ### Visual Aesthetics
 - **No titles** on any graphs
@@ -82,12 +83,12 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 
 ### Adaptive Noise Detection (Voice Chart)
 ```python
-# Track 20th percentile as noise floor
-current_noise_floor = np.percentile(voice_magnitude, 20)
-# Average over 50 frames for adaptive threshold
+# Track 10th percentile as noise floor each frame
+current_noise_floor = np.percentile(voice_magnitude, 10)
+# Average over recent history (currently size 1)
 adaptive_noise_floor = np.mean(history)
-# Filter points 15 dB above threshold
-threshold = adaptive_noise_floor + 15
+# Keep bins 8 dB above threshold after amplification
+threshold = adaptive_noise_floor + 8
 ```
 
 ## Recent Changes (Session History)
@@ -102,6 +103,10 @@ threshold = adaptive_noise_floor + 15
    - **Polar bar chart** (current) → circular radial bars
 6. Added adaptive background noise detection for voice chart
 7. Reduced polar chart labels to 4 angles + 3 radial markers
+8. Added `--run-for` CLI flag so profiling runs can auto-terminate after N seconds
+9. Skipped redundant bar height/color updates by caching drawn values (fewer matplotlib patch updates per frame)
+10. Added `_fast_percentile` helper to replace repeated `np.percentile` calls in noise removal paths
+11. Offset and clipped voice polar bars between 15-60 radius so activity remains visible even at low magnitudes
 
 ## File Structure
 ```
@@ -138,3 +143,9 @@ noisy/
 ### Observations / Potential Improvements
 - Polar chart currently uses all 30 bins - could be reduced for cleaner look
 - Voice frequency range (0-1000 Hz) captures fundamentals; could extend to ~4000 Hz for consonants
+- Matplotlib still warns about `cache_frame_data=True` when FuncAnimation length is inferred; user is fine ignoring it for now
+
+## Profiling Notes (2025-11-23)
+- Profiling attempts used this session: 8 / 20
+- Hotspots continue to be `update_spectrogram`, `update_voice_frequency_bands`, and `update_frequency_bands`, but caching/path-mutation plus `_fast_percentile` reduced per-frame overhead considerably
+- Latest gains: selective bar updates, PolyCollection path mutation, Hann/mel caching, waveform axis caching, and percentile helper got `update` down to ~0.147s for the profiled clip; next focus is percentile-heavy sections and remaining numpy work

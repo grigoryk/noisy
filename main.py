@@ -8,6 +8,7 @@ import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.collections import PolyCollection
 from scipy.signal import butter, sosfilt
 import line_profiler
 
@@ -43,6 +44,8 @@ class AudioVisualizer:
         self.voice_noise_threshold = 8  # dB above noise floor to show (lower = more detail)
         self.voice_noise_history_size = 1  # frames to track for noise floor estimation
         self.voice_amplification = 1.6  # amplify voice magnitudes for visibility
+        self.voice_radius_base = 15
+        self.voice_radius_max = 60
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
@@ -69,6 +72,9 @@ class AudioVisualizer:
         self.label_fontsize = 8  # font size for tick labels
         self.waveform_linewidth = 1.5  # thickness of waveform line
         self.waveform_alpha = 0.9  # opacity of waveform line
+        self.waveform_x = None
+        self.waveform_len = 0
+        self.waveform_ylim_epsilon = 1e-3
         # Create custom colormaps from palette for all visualizations
         self.spectrogram_colormap = LinearSegmentedColormap.from_list('purple_spec', self.palette)
         self.bands_colormap = LinearSegmentedColormap.from_list('purple_bands', self.palette)
@@ -82,11 +88,36 @@ class AudioVisualizer:
         self.ylim_history = []
         self.voice_noise_floor_history = []
         self.voice_bar_colors = None
+        self.voice_bar_heights = None
+        voice_freq_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
+        self.voice_bin_centers = (voice_freq_edges[:-1] + voice_freq_edges[1:]) / 2
+        voice_angle_edges = np.linspace(0, 2 * np.pi, self.voice_num_bins + 1)
+        self.voice_theta_left = voice_angle_edges[:-1]
+        self.voice_theta_right = voice_angle_edges[1:]
+        self.voice_vertices = None
+        self.voice_collection = None
+        self.voice_paths = None
         self.bars_colors = None
+        self.bars_heights = None
         self.color_change_epsilon = 1e-3
+        self.height_change_epsilon = 0.5
         self.color_update_interval = 10
         self.color_frame_counter = 0
         self.should_update_colors = True
+        self.window = None
+        self.window_size = None
+        self.mel_bin_starts = None
+        self.mel_bin_ends = None
+        self.mel_freq_len = None
+        self.frequency_bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
+        self.frequency_bin_centers = (self.frequency_bin_edges[:-1] + self.frequency_bin_edges[1:]) / 2
+        self.frequency_bin_width = self.frequency_bin_edges[1] - self.frequency_bin_edges[0]
+        bar_width = self.frequency_bin_width * 0.8
+        self.bar_left = self.frequency_bin_centers - bar_width / 2
+        self.bar_right = self.frequency_bin_centers + bar_width / 2
+        self.bars_vertices = None
+        self.bars_collection = None
+        self.bars_paths = None
         
         # Pre-compute mel filter bank to avoid recalculating every frame
         self._setup_mel_filterbank()
@@ -153,8 +184,12 @@ class AudioVisualizer:
             label.set_alpha(self.label_alpha)
     
     def setup_voice_frequency_bands(self):
-        self.voice_bars = None
-        self.ax_voice_bars.set_ylim(15, 60)  # Start bars away from center for bigger appearance
+        self.voice_collection = None
+        self.voice_vertices = None
+        self.voice_paths = None
+        self.voice_bar_colors = None
+        self.voice_bar_heights = None
+        self.ax_voice_bars.set_ylim(self.voice_radius_base, self.voice_radius_max)  # Start bars away from center
         self.ax_voice_bars.set_theta_zero_location('N')
         self.ax_voice_bars.set_theta_direction(-1)
         self.ax_voice_bars.set_facecolor(self.background_color)
@@ -170,7 +205,11 @@ class AudioVisualizer:
             label.set_alpha(self.label_alpha)
     
     def setup_frequency_bands(self):
-        self.bars = None
+        self.bars_collection = None
+        self.bars_vertices = None
+        self.bars_paths = None
+        self.bars_colors = None
+        self.bars_heights = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
         ylabel = self.ax_bars.set_ylabel('Magnitude (dB)', color=self.text_color)
         ylabel.set_alpha(self.label_alpha)
@@ -187,9 +226,14 @@ class AudioVisualizer:
                                      bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color,
                                               edgecolor=self.border_color, alpha=0.3))
     
+    @line_profiler.profile
     def update_waveform(self):
-        self.line_wave.set_data(np.arange(len(self.audio_buffer)), self.audio_buffer)
-        self.ax_wave.set_xlim(0, len(self.audio_buffer))
+        buffer_len = len(self.audio_buffer)
+        if self.waveform_len != buffer_len or self.waveform_x is None:
+            self.waveform_x = np.arange(buffer_len)
+            self.waveform_len = buffer_len
+            self.ax_wave.set_xlim(0, buffer_len)
+        self.line_wave.set_data(self.waveform_x, self.audio_buffer)
         
         max_amp = np.max(np.abs(self.audio_buffer))
         if max_amp > 0:
@@ -205,15 +249,15 @@ class AudioVisualizer:
                 ylim = self.ylim_smoothing * self.prev_ylim + (1 - self.ylim_smoothing) * avg_ylim
             else:
                 ylim = avg_ylim
+            needs_update = (self.prev_ylim is None) or (abs(self.prev_ylim - ylim) > self.waveform_ylim_epsilon)
             self.prev_ylim = ylim
-            self.ax_wave.set_ylim(-ylim, ylim)
-            
-            # Update scale indicator text
-            self.scale_text.set_text(f'±{ylim:.3f}')
+            if needs_update:
+                self.ax_wave.set_ylim(-ylim, ylim)
+                self.scale_text.set_text(f'±{ylim:.3f}')
     
     def _normalize_magnitude(self, data, noise_floor_percentile):
         """Remove noise floor and normalize magnitude data to 0-1 range."""
-        noise_floor = np.percentile(data, noise_floor_percentile)
+        noise_floor = self._fast_percentile(data, noise_floor_percentile)
         data_clean = np.maximum(data - noise_floor, 0)
         data_normalized = (data_clean - np.min(data_clean)) / (np.max(data_clean) - np.min(data_clean) + 1e-10)
         return np.clip(data_normalized, 0, 1)
@@ -233,20 +277,73 @@ class AudioVisualizer:
             cached_colors = cached_colors.copy()
             cached_colors[change_mask] = new_colors[change_mask]
         return change_mask, cached_colors
+
+    def _height_change_mask(self, cached_heights, new_heights):
+        if cached_heights is None or len(cached_heights) != len(new_heights):
+            return np.ones(len(new_heights), dtype=bool), new_heights.copy()
+        diffs = np.abs(new_heights - cached_heights)
+        change_mask = diffs > self.height_change_epsilon
+        if np.any(change_mask):
+            cached_heights[change_mask] = new_heights[change_mask]
+        return change_mask, cached_heights
+
+    def _fast_percentile(self, data, percentile):
+        if data.size == 0:
+            return 0.0
+        percentile = np.clip(percentile, 0, 100)
+        index = int(round((percentile / 100.0) * (data.size - 1)))
+        partitioned = np.partition(data, index)
+        return partitioned[index]
+
+    def _ensure_mel_bins(self, freqs):
+        freq_len = len(freqs)
+        if self.mel_freq_len == freq_len and self.mel_bin_starts is not None:
+            return
+        starts = np.searchsorted(freqs, self.mel_hz_points[:-2], side='left')
+        ends = np.searchsorted(freqs, self.mel_hz_points[2:], side='left')
+        self.mel_bin_starts = starts
+        self.mel_bin_ends = ends
+        self.mel_freq_len = freq_len
+
+    def _update_bar_vertices(self, heights):
+        if self.bars_vertices is None:
+            count = len(heights)
+            self.bars_vertices = np.zeros((count, 4, 2))
+            self.bars_vertices[:, 0, 0] = self.bar_left
+            self.bars_vertices[:, 1, 0] = self.bar_left
+            self.bars_vertices[:, 2, 0] = self.bar_right
+            self.bars_vertices[:, 3, 0] = self.bar_right
+        self.bars_vertices[:, 0, 1] = 0
+        self.bars_vertices[:, 3, 1] = 0
+        self.bars_vertices[:, 1, 1] = heights
+        self.bars_vertices[:, 2, 1] = heights
+        return self.bars_vertices
     
+    def _update_voice_bar_vertices(self, heights):
+        if self.voice_vertices is None:
+            count = len(heights)
+            self.voice_vertices = np.zeros((count, 4, 2))
+            self.voice_vertices[:, 0, 0] = self.voice_theta_left
+            self.voice_vertices[:, 1, 0] = self.voice_theta_left
+            self.voice_vertices[:, 2, 0] = self.voice_theta_right
+            self.voice_vertices[:, 3, 0] = self.voice_theta_right
+        self.voice_vertices[:, 0, 1] = self.voice_radius_base
+        self.voice_vertices[:, 3, 1] = self.voice_radius_base
+        self.voice_vertices[:, 1, 1] = heights
+        self.voice_vertices[:, 2, 1] = heights
+        return self.voice_vertices
+    
+    @line_profiler.profile
     def update_spectrogram(self, freqs, magnitude_db):
-        hz_points = self.mel_hz_points
-        
-        # Calculate energy in each mel-spaced frequency band
-        mel_energies = []
-        for i in range(self.mel_banks):
-            mask = (freqs >= hz_points[i]) & (freqs < hz_points[i+2])
-            if np.any(mask):
-                mel_energies.append(np.mean(magnitude_db[mask]))
-            else:
-                mel_energies.append(-100)  # Very low dB value for empty bins
-        
-        mel_magnitude = np.array(mel_energies)
+        self._ensure_mel_bins(freqs)
+        prefix = np.concatenate(([0.0], np.cumsum(magnitude_db)))
+        mel_magnitude = np.full(self.mel_banks, -100.0)
+        for idx in range(self.mel_banks):
+            start = self.mel_bin_starts[idx]
+            end = self.mel_bin_ends[idx]
+            if end > start:
+                mel_sum = prefix[end] - prefix[start]
+                mel_magnitude[idx] = mel_sum / (end - start)
         mel_normalized = self._normalize_magnitude(mel_magnitude, self.spectrogram_noise_floor)
         mel_normalized = np.power(mel_normalized, self.spectrogram_power)
         
@@ -263,7 +360,7 @@ class AudioVisualizer:
         voice_magnitude = visible_magnitude[voice_mask]
         
         # Track noise floor over time (use lower percentile to be less aggressive)
-        current_noise_floor = np.percentile(voice_magnitude, 10)
+        current_noise_floor = self._fast_percentile(voice_magnitude, 10)
         self.voice_noise_floor_history.append(current_noise_floor)
         if len(self.voice_noise_floor_history) > self.voice_noise_history_size:
             self.voice_noise_floor_history.pop(0)
@@ -271,12 +368,8 @@ class AudioVisualizer:
         # Calculate adaptive noise floor (average over history)
         adaptive_noise_floor = np.mean(self.voice_noise_floor_history)
         
-        # Create bins for polar chart
-        bin_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
         # Interpolate magnitude at bin centers and amplify for better visibility
-        bin_magnitudes = (np.interp(bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor) * self.voice_amplification
+        bin_magnitudes = (np.interp(self.voice_bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor) * self.voice_amplification
         
         # Filter out bins below threshold (reduced for more detail)
         threshold = self.voice_noise_threshold
@@ -287,63 +380,83 @@ class AudioVisualizer:
             bin_magnitudes = self.bands_smoothing * self.prev_voice_bin_magnitudes + (1 - self.bands_smoothing) * bin_magnitudes
         self.prev_voice_bin_magnitudes = bin_magnitudes
         
-        # Convert frequency bins to angles (0 to 2π)
-        theta = np.linspace(0, 2 * np.pi, self.voice_num_bins, endpoint=False)
-        width = 2 * np.pi / self.voice_num_bins
-        
         # Normalize for colors
         normalized = np.clip(bin_magnitudes / 60, 0, 1)
         colors = self.bands_colormap(normalized)
+        display_heights = np.clip(self.voice_radius_base + bin_magnitudes,
+                                  self.voice_radius_base, self.voice_radius_max)
         
         # Update polar bar chart (avoid color updates when unchanged)
         update_colors = self.should_update_colors or self.voice_bar_colors is None
-        if self.voice_bars:
-            color_changes = None
+        if self.voice_collection is None:
+            self.voice_bar_heights = display_heights.copy()
+            verts = self._update_voice_bar_vertices(self.voice_bar_heights)
+            self.voice_bar_colors = colors.copy()
+            self.voice_collection = PolyCollection(verts, facecolors=self.voice_bar_colors,
+                                                   edgecolors='none', alpha=0.8, closed=True)
+            self.ax_voice_bars.add_collection(self.voice_collection)
+            self.voice_paths = self.voice_collection.get_paths()
+        else:
+            height_changes, self.voice_bar_heights = self._height_change_mask(self.voice_bar_heights, display_heights)
+            if np.any(height_changes):
+                changed = np.flatnonzero(height_changes)
+                for idx in changed:
+                    height = self.voice_bar_heights[idx]
+                    vertices = self.voice_paths[idx].vertices
+                    vertices[1, 1] = height
+                    vertices[2, 1] = height
+                if self.voice_vertices is not None:
+                    self.voice_vertices[changed, 1, 1] = self.voice_bar_heights[changed]
+                    self.voice_vertices[changed, 2, 1] = self.voice_bar_heights[changed]
             if update_colors:
                 color_changes, self.voice_bar_colors = self._color_change_mask(self.voice_bar_colors, colors)
-            for idx, bar in enumerate(self.voice_bars):
-                bar.set_height(bin_magnitudes[idx])
-                if color_changes is not None and color_changes[idx]:
-                    bar.set_color(self.voice_bar_colors[idx])
-        else:
-            self.voice_bars = self.ax_voice_bars.bar(theta, bin_magnitudes, width=width, color=colors, alpha=0.8)
-            self.voice_bar_colors = colors.copy()
+                if np.any(color_changes):
+                    self.voice_collection.set_facecolor(self.voice_bar_colors)
     
     @line_profiler.profile
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
         # Divide frequency range into bins and find peak magnitude in each
-        bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        bin_centers = self.frequency_bin_centers
         
         # Interpolate magnitude values at bin centers for smooth visualization
         bin_magnitudes = np.interp(bin_centers, visible_freqs, visible_magnitude) + self.bands_magnitude_offset
         
         # Remove baseline noise and apply smoothing
         if self.bands_baseline_percentile > 0:
-            baseline = np.percentile(bin_magnitudes, self.bands_baseline_percentile)
+            baseline = self._fast_percentile(bin_magnitudes, self.bands_baseline_percentile)
             bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
         
         if self.prev_bin_magnitudes is not None:
             bin_magnitudes = self.bands_smoothing * self.prev_bin_magnitudes + (1 - self.bands_smoothing) * bin_magnitudes
         self.prev_bin_magnitudes = bin_magnitudes
         
-        bin_widths = bin_edges[1] - bin_edges[0]
-        
         normalized = np.clip(bin_magnitudes / self.bands_magnitude_scale, 0, 1)
         colors = self.bands_colormap(normalized)
         
         update_colors = self.should_update_colors or self.bars_colors is None
-        if self.bars:
-            color_changes = None
+        if self.bars_collection is None:
+            self.bars_heights = bin_magnitudes.copy()
+            verts = self._update_bar_vertices(self.bars_heights)
+            self.bars_colors = colors.copy()
+            self.bars_collection = PolyCollection(verts, facecolors=self.bars_colors, edgecolors='none')
+            self.ax_bars.add_collection(self.bars_collection)
+            self.bars_paths = self.bars_collection.get_paths()
+        else:
+            height_changes, self.bars_heights = self._height_change_mask(self.bars_heights, bin_magnitudes)
+            if np.any(height_changes):
+                changed = np.flatnonzero(height_changes)
+                for idx in changed:
+                    height = self.bars_heights[idx]
+                    vertices = self.bars_paths[idx].vertices
+                    vertices[1, 1] = height
+                    vertices[2, 1] = height
+                if self.bars_vertices is not None:
+                    self.bars_vertices[changed, 1, 1] = self.bars_heights[changed]
+                    self.bars_vertices[changed, 2, 1] = self.bars_heights[changed]
             if update_colors:
                 color_changes, self.bars_colors = self._color_change_mask(self.bars_colors, colors)
-            for idx, bar in enumerate(self.bars):
-                bar.set_height(bin_magnitudes[idx])
-                if color_changes is not None and color_changes[idx]:
-                    bar.set_color(self.bars_colors[idx])
-        else:
-            self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
-            self.bars_colors = colors.copy()
+                if np.any(color_changes):
+                    self.bars_collection.set_facecolor(self.bars_colors)
     
     @line_profiler.profile
     def update(self, _frame):
@@ -355,7 +468,11 @@ class AudioVisualizer:
         self.should_update_colors = (self.color_frame_counter == 0)
         self.color_frame_counter = (self.color_frame_counter + 1) % self.color_update_interval
         
-        windowed = self.audio_buffer * np.hanning(len(self.audio_buffer))
+        buffer_len = len(self.audio_buffer)
+        if self.window_size != buffer_len:
+            self.window = np.hanning(buffer_len)
+            self.window_size = buffer_len
+        windowed = self.audio_buffer * self.window
         fft = np.fft.rfft(windowed)
         magnitude = np.abs(fft)
         

@@ -47,3 +47,11 @@
 - Add @line_profiler.profile decorators to functions where significant time is spent
 - Work top-down: profile entry point first, then drill into hot functions
 - This shows line-by-line timing to identify actual bottlenecks, not just function call counts
+
+## 2025-11-23
+
+### Profiling Workflow
+- Toggle profiling by exporting `LINE_PROFILE=1` (on) or `LINE_PROFILE=0` (off) before running `python main.py`
+- Inspect captured stats with `python -m line_profiler -rtmz profile_output.lprof`
+- Use `@line_profiler.profile` on functions worth instrumenting
+- Each session is limited to 20 profiling executions, so track attempts carefully
