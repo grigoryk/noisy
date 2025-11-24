@@ -12,7 +12,7 @@ import line_profiler
 
 class AudioVisualizer:
     @line_profiler.profile
-    def __init__(self, sample_rate, num_bins=100, highpass_freq=80, smoothing=0.5):
+    def __init__(self, sample_rate, num_bins=50, highpass_freq=100, smoothing=0.5):
         # Performance tuning
         self.update_interval_ms = 20  # milliseconds between frames (lower = higher FPS, more CPU)
         
@@ -79,6 +79,12 @@ class AudioVisualizer:
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
         self.voice_noise_floor_history = []
+        self.voice_bar_colors = None
+        self.bars_colors = None
+        self.color_change_epsilon = 1e-3
+        self.color_update_interval = 10
+        self.color_frame_counter = 0
+        self.should_update_colors = True
         
         # Pre-compute mel filter bank to avoid recalculating every frame
         self._setup_mel_filterbank()
@@ -215,6 +221,16 @@ class AudioVisualizer:
         mel_high = 2595 * np.log10(1 + self.mel_freq_high / 700)
         mel_points = np.linspace(mel_low, mel_high, self.mel_banks + 2)
         self.mel_hz_points = 700 * (10**(mel_points / 2595) - 1)
+
+    def _color_change_mask(self, cached_colors, new_colors):
+        if cached_colors is None or len(cached_colors) != len(new_colors):
+            return np.ones(len(new_colors), dtype=bool), new_colors.copy()
+        diffs = np.max(np.abs(new_colors - cached_colors), axis=1)
+        change_mask = diffs > self.color_change_epsilon
+        if np.any(change_mask):
+            cached_colors = cached_colors.copy()
+            cached_colors[change_mask] = new_colors[change_mask]
+        return change_mask, cached_colors
     
     def update_spectrogram(self, freqs, magnitude_db):
         hz_points = self.mel_hz_points
@@ -277,14 +293,19 @@ class AudioVisualizer:
         normalized = np.clip(bin_magnitudes / 60, 0, 1)
         colors = self.bands_colormap(normalized)
         
-        # Update polar bar chart
+        # Update polar bar chart (avoid color updates when unchanged)
+        update_colors = self.should_update_colors or self.voice_bar_colors is None
         if self.voice_bars:
-            # Batch update heights and colors
-            for bar, height, color in zip(self.voice_bars, bin_magnitudes, colors):
-                bar.set_height(height)
-                bar.set_color(color)
+            color_changes = None
+            if update_colors:
+                color_changes, self.voice_bar_colors = self._color_change_mask(self.voice_bar_colors, colors)
+            for idx, bar in enumerate(self.voice_bars):
+                bar.set_height(bin_magnitudes[idx])
+                if color_changes is not None and color_changes[idx]:
+                    bar.set_color(self.voice_bar_colors[idx])
         else:
             self.voice_bars = self.ax_voice_bars.bar(theta, bin_magnitudes, width=width, color=colors, alpha=0.8)
+            self.voice_bar_colors = colors.copy()
     
     @line_profiler.profile
     def update_frequency_bands(self, visible_freqs, visible_magnitude):
@@ -309,13 +330,18 @@ class AudioVisualizer:
         normalized = np.clip(bin_magnitudes / self.bands_magnitude_scale, 0, 1)
         colors = self.bands_colormap(normalized)
         
+        update_colors = self.should_update_colors or self.bars_colors is None
         if self.bars:
-            # Batch update heights and colors (more efficient than loop)
-            for bar, height, color in zip(self.bars, bin_magnitudes, colors):
-                bar.set_height(height)
-                bar.set_color(color)
+            color_changes = None
+            if update_colors:
+                color_changes, self.bars_colors = self._color_change_mask(self.bars_colors, colors)
+            for idx, bar in enumerate(self.bars):
+                bar.set_height(bin_magnitudes[idx])
+                if color_changes is not None and color_changes[idx]:
+                    bar.set_color(self.bars_colors[idx])
         else:
             self.bars = self.ax_bars.bar(bin_centers, bin_magnitudes, width=bin_widths * 0.8, color=colors)
+            self.bars_colors = colors.copy()
     
     @line_profiler.profile
     def update(self, _frame):
@@ -323,6 +349,9 @@ class AudioVisualizer:
         
         if self.audio_buffer is None:
             return []
+        
+        self.should_update_colors = (self.color_frame_counter == 0)
+        self.color_frame_counter = (self.color_frame_counter + 1) % self.color_update_interval
         
         windowed = self.audio_buffer * np.hanning(len(self.audio_buffer))
         fft = np.fft.rfft(windowed)

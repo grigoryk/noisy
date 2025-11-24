@@ -39,3 +39,11 @@
 - session_context.md serves as project memory across sessions
 - Keep it factual and technical - document what exists and observations about current behavior
 - Observations section can note limitations or characteristics of current implementation
+
+### Performance Profiling Approach
+- Use line_profiler for performance analysis (not cProfile first)
+- Start by analyzing where the program actually spends time
+- Begin at the top-level entry point (e.g., main(), run())
+- Add @line_profiler.profile decorators to functions where significant time is spent
+- Work top-down: profile entry point first, then drill into hot functions
+- This shows line-by-line timing to identify actual bottlenecks, not just function call counts
