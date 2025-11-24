@@ -244,6 +244,7 @@ class AudioVisualizer:
             ('Offset (dB)', 20, 100, self.bands_magnitude_offset, 1, self._on_offset_slider),
             ('Scale (dB)', 20, 120, self.bands_magnitude_scale, 1, self._on_scale_slider),
             ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider),
+            ('Voice Gain', 0.5, 3.0, self.voice_amplification, 0.05, self._on_voice_gain_slider),
             ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider),
         ]
         self.tuning_sliders = []
@@ -312,6 +313,12 @@ class AudioVisualizer:
         self.bands_smoothing = float(value)
         self.should_update_colors = True
     
+    def _on_voice_gain_slider(self, value):
+        self.voice_amplification = max(0.1, float(value))
+        self.prev_voice_bin_magnitudes = None
+        self.should_update_colors = True
+        self.voice_noise_floor_history.clear()
+
     def _on_spectrogram_bins_slider(self, value):
         new_min = max(1, int(round(value)))
         if new_min == self.spectrogram_min_view_bins:

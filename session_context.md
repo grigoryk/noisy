@@ -62,6 +62,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `waveform_alpha = 0.9` - waveform line opacity
 - `voice_noise_threshold = 8` - dB above noise floor to display
 - `voice_noise_history_size = 1` - frames for noise tracking
+- `voice_amplification = 1.6` - multiplier to boost polar bars (tunable via UI)
 - `bands_baseline_percentile = 35` - dynamic noise floor percentile for full-range bars
 - `bands_noise_history_size = 4` - frames to average baseline
 - `bands_magnitude_offset = 60`, `bands_magnitude_scale = 60`
@@ -123,6 +124,7 @@ threshold = adaptive_noise_floor + 8
 17. Smoothed the Spectro Hz range slider by always sampling neighboring mel bins so the max handle no longer causes sudden jumps near 7.5 kHz
 18. Added adaptive resampling that interpolates the spectrogram view to a continuously-scaled bin count, eliminating visual jumps when the slider span changes
 19. Removed the unused `mel_noise_floor` setting and redundant cache resets in the setup helpers to reduce clutter without changing behavior
+20. Added a Voice Gain slider that adjusts `voice_amplification` so polar bars can be boosted or tamed live
 
 ## File Structure
 ```
