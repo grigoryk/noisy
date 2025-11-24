@@ -64,3 +64,4 @@
 - After each profiled run, dump stats with `python -m line_profiler -rtmz profile_output.lprof` and archive the human-readable text (e.g., `profile_output_YYYY-MM-DDTHHMMSS.txt`).
 - Only add new `@line_profiler.profile` decorators to functions you plan to inspect next; remove or collapse them after addressing bottlenecks to keep noise low.
 - Stay mindful of the 20-run cap per session—log each attempt and stop early if findings are clear.
+- After wrapping a profiling loop, provide an impact summary that lists the changes kept, the % impact for each improvement, and the cumulative % improvement so far—skip discussing “what remains” (save that for the next loop).

@@ -596,16 +596,37 @@ class AudioVisualizer:
         target_bins = max(self.spectrogram_min_view_bins, bins_from_span)
         target_bins = min(max(target_bins, 2), max(self.spectrogram_min_view_bins, len(self.mel_bin_centers)))
         target_centers = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, target_bins)
-        interpolated = np.empty((view_data.shape[0], target_bins))
+        if current_bins == 1:
+            tiled = np.repeat(view_data, target_bins, axis=1)
+            return tiled, target_centers
+
         base_x = view_centers
-        for row_idx in range(view_data.shape[0]):
-            interpolated[row_idx] = np.interp(
-                target_centers,
-                base_x,
-                view_data[row_idx],
-                left=view_data[row_idx, 0],
-                right=view_data[row_idx, -1],
-            )
+        if base_x.size < 2:
+            tiled = np.repeat(view_data, target_bins, axis=1)
+            return tiled, target_centers
+
+        below_mask = target_centers <= base_x[0]
+        above_mask = target_centers >= base_x[-1]
+        interior_mask = ~(below_mask | above_mask)
+        interpolated = np.empty((view_data.shape[0], target_bins))
+
+        if np.any(interior_mask):
+            interior_centers = target_centers[interior_mask]
+            interior_indices = np.searchsorted(base_x, interior_centers, side='right') - 1
+            interior_indices = np.clip(interior_indices, 0, base_x.size - 2)
+            left = base_x[interior_indices]
+            right = base_x[interior_indices + 1]
+            denom = np.maximum(right - left, 1e-9)
+            weights = (interior_centers - left) / denom
+            left_vals = view_data[:, interior_indices]
+            right_vals = view_data[:, interior_indices + 1]
+            interpolated[:, interior_mask] = left_vals + (right_vals - left_vals) * weights
+
+        if np.any(below_mask):
+            interpolated[:, below_mask] = view_data[:, 0][:, None]
+        if np.any(above_mask):
+            interpolated[:, above_mask] = view_data[:, -1][:, None]
+
         return interpolated, target_centers
 
     def _configure_frequency_bins(self, bin_count=None):
@@ -679,6 +700,17 @@ class AudioVisualizer:
         index = int(round((percentile / 100.0) * (data.size - 1)))
         partitioned = np.partition(data, index)
         return partitioned[index]
+
+    def _percentile_along_axis(self, data, percentile, axis=0):
+        arr = np.asarray(data)
+        if arr.size == 0 or arr.shape[axis] == 0:
+            out_shape = arr.shape[:axis] + arr.shape[axis + 1:]
+            return np.zeros(out_shape, dtype=arr.dtype if arr.size else float)
+        percentile = np.clip(percentile, 0, 100)
+        axis_len = arr.shape[axis]
+        index = int(round((percentile / 100.0) * (axis_len - 1)))
+        partitioned = np.partition(arr, index, axis=axis)
+        return np.take(partitioned, index, axis=axis)
 
     def _ensure_mel_bins(self, freqs):
         freq_len = len(freqs)
@@ -766,9 +798,9 @@ class AudioVisualizer:
 
         if len(self.voice_noise_history_frames) >= 5:
             history_matrix = np.vstack(self.voice_noise_history_frames)
-            per_bin_noise = np.percentile(history_matrix, 25, axis=0)
+            per_bin_noise = self._percentile_along_axis(history_matrix, 25, axis=0)
         else:
-            percentile_value = np.percentile(bin_inputs, 10, axis=None)
+            percentile_value = self._fast_percentile(bin_inputs, 10)
             per_bin_noise = np.full_like(bin_inputs, percentile_value)
 
         per_bin_noise = np.minimum(per_bin_noise, bin_inputs)
@@ -817,25 +849,26 @@ class AudioVisualizer:
     def _update_noise_floor_display(self, noise_levels):
         if noise_levels is None or noise_levels.size == 0 or not hasattr(self, 'ax_noise_bars'):
             return
-        levels = np.array(noise_levels, dtype=float)
+        levels = np.asarray(noise_levels, dtype=float)
         finite_mask = np.isfinite(levels)
         if not np.any(finite_mask):
             return
-        min_val = np.min(levels[finite_mask])
-        max_val = np.max(levels[finite_mask])
+        finite_values = levels[finite_mask]
+        min_val = finite_values.min()
+        max_val = finite_values.max()
         span = max(max_val - min_val, 1.0)
-        normalized = (levels - min_val) / span
-        normalized = np.clip(normalized, 0, 1)
+        safe_levels = np.where(finite_mask, levels, min_val)
+        normalized = np.clip((safe_levels - min_val) / span, 0, 1)
         display_heights = self.noise_radius_base + normalized * (self.noise_radius_max - self.noise_radius_base)
         if self.prev_noise_levels is not None:
             display_heights = self.bands_smoothing * self.prev_noise_levels + (1 - self.bands_smoothing) * display_heights
         self.prev_noise_levels = display_heights
-        colors = self.bands_colormap(normalized)
         update_colors = self.should_update_colors or self.noise_bar_colors is None
+        colors = self.bands_colormap(normalized) if update_colors else None
         if self.noise_collection is None:
             self.noise_bar_heights = display_heights.copy()
             verts = self._update_noise_bar_vertices(self.noise_bar_heights)
-            self.noise_bar_colors = colors.copy()
+            self.noise_bar_colors = colors.copy() if colors is not None else self.bands_colormap(normalized).copy()
             self.noise_collection = PolyCollection(verts, facecolors=self.noise_bar_colors,
                                                    edgecolors='none', alpha=0.65, closed=True)
             self.ax_noise_bars.add_collection(self.noise_collection)

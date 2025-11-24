@@ -190,3 +190,11 @@ noisy/
 - Profiling attempts used this session: 8 / 20
 - Hotspots continue to be `update_spectrogram`, `update_voice_frequency_bands`, and `update_frequency_bands`, but caching/path-mutation plus `_fast_percentile` reduced per-frame overhead considerably
 - Latest gains: selective bar updates, PolyCollection path mutation, Hann/mel caching, waveform axis caching, and percentile helper got `update` down to ~0.147s for the profiled clip; next focus is percentile-heavy sections and remaining numpy work
+
+## Profiling Notes (2025-11-24)
+- Profiling attempts used this session: 12 / 20
+- Command template: `LINE_PROFILE=1 env/bin/python main.py --run-for 10`
+- Run 10 (`profile_output_2025-11-24T091000_voice.txt`): `AudioVisualizer.update` totaled 0.153 s across 84 frames (~1.8 ms/frame). `update_spectrogram` held 52.7% of the budget, `update_voice_frequency_bands` 32.3%, and `update_frequency_bands` 9.3%. `_update_noise_floor_display` alone was 40.9% of the voice function (≈134 µs/frame) so it became the next target after the spectrogram vectorization.
+- Run 11 (`profile_output_2025-11-24T092100_noisevert.txt`): moving the noise polar chart to `PolyCollection.set_verts` backfired—Matplotlib rebuilt every polygon per frame and `_update_noise_floor_display` ballooned to 61.8% of the voice cost. Archived for reference and rolled back immediately.
+- Run 12 (`profile_output_2025-11-24T092430_noisecolors.txt`): restored per-path edits but gated colormap generation behind the color-change flag and cleaned up the normalization math. `_update_noise_floor_display` dropped to 9.5 ms total (≈104 µs/frame, 32.6% of the voice function) and `AudioVisualizer.update` now averages 0.139 s across 91 frames (~1.5 ms/frame). The remaining hotspots are `_update_spectrogram_image` (≈56% of `update`), the percentile stack in `update_voice_frequency_bands`, and the PolyCollection mutations in the rectangular frequency bars.
+- `python -m line_profiler -rtmz profile_output.lprof` still fails because the shimmed `python` binary isn’t present; plain `env/bin/python -m line_profiler ...` works and the text dumps above live alongside the `.lprof` for future comparison.
