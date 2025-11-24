@@ -8,9 +8,10 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 ### Visual Layout (3 rows)
 1. **Top (1.5x height)**: Mel-scaled spectrogram (0-8000 Hz)
 2. **Middle (1x height)**: Waveform with dynamic scaling
-3. **Bottom (1.5x height)**: Voice polar chart on the left (1/3 width) plus a right block (2/3 width) that stacks the rectangular bars beside a dedicated noise polar chart
-   - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0–2000 Hz by default, live-adjustable up to 8 kHz)
-   - **Right block**: Full range frequency bars (0–8000 Hz) plus a noise polar chart sharing the voice bins so ambient energy is visible separately and mirrors the same adjustable ceiling
+3. **Bottom (1.5x height)**: Three-column layout with voice polar on the left, the noise polar chart directly beside it, and the full-range bars stretching all the way to the tuning panel on the right
+   - **Left column**: Voice frequencies - Polar bar chart (0–2000 Hz by default, live-adjustable up to 8 kHz)
+   - **Middle column**: Noise polar chart that mirrors the voice bins so ambient energy is visible separately and follows the same adjustable ceiling
+   - **Right column**: Full range frequency bars (0–8000 Hz) spanning the remaining width for maximum horizontal real estate
 
 ### Color Palette - Deep Ocean Purple Theme
 - Background: `#0a1628` (deep navy)

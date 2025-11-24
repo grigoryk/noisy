@@ -152,12 +152,11 @@ class AudioVisualizer:
         self.ax_spectrogram = self.fig.add_subplot(gs[0], facecolor=self.background_color)
         self.ax_wave = self.fig.add_subplot(gs[1], facecolor=self.background_color)
         
-        # Split bottom row into voice polar (1/3) and a right block that contains bars + noise polar
-        gs_bottom = gs[2].subgridspec(1, 2, width_ratios=[1, 2], wspace=0.15)
+        # Split bottom row into three columns: voice polar, noise polar, and expanded frequency bars
+        gs_bottom = gs[2].subgridspec(1, 3, width_ratios=[1, 1, 2.2], wspace=0.18)
         self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], projection='polar', facecolor=self.background_color)
-        right_spec = gs_bottom[1].subgridspec(1, 2, width_ratios=[1.6, 1], wspace=0.25)
-        self.ax_bars = self.fig.add_subplot(right_spec[0], facecolor=self.background_color)
-        self.ax_noise_bars = self.fig.add_subplot(right_spec[1], projection='polar', facecolor=self.background_color)
+        self.ax_noise_bars = self.fig.add_subplot(gs_bottom[1], projection='polar', facecolor=self.background_color)
+        self.ax_bars = self.fig.add_subplot(gs_bottom[2], facecolor=self.background_color)
         
         self._configure_frequency_bins(self.num_bins)
         
@@ -283,7 +282,7 @@ class AudioVisualizer:
             label.set_alpha(self.label_alpha)
     
     def setup_fps_display(self):
-        self.fps_text = self.fig.text(0.98, 0.02, '', ha='right', va='bottom',
+        self.fps_text = self.fig.text(0.98, 0.98, '', ha='right', va='top',
                                      fontsize=10, color=self.text_color, alpha=0.6,
                                      bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color,
                                               edgecolor=self.border_color, alpha=0.3))

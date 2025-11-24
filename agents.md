@@ -55,3 +55,12 @@
 - Inspect captured stats with `python -m line_profiler -rtmz profile_output.lprof`
 - Use `@line_profiler.profile` on functions worth instrumenting
 - Each session is limited to 20 profiling executions, so track attempts carefully
+
+## 2025-11-24
+
+### Profiling Iteration Checklist
+- Always profile the actual entry path (`AudioVisualizer.run` via `main.py`) before drilling into helpers.
+- For each run: export `LINE_PROFILE=1`, then launch `env/bin/python main.py --run-for <seconds>` to capture a short, repeatable clip (keep it under ~30s to save executions).
+- After each profiled run, dump stats with `python -m line_profiler -rtmz profile_output.lprof` and archive the human-readable text (e.g., `profile_output_YYYY-MM-DDTHHMMSS.txt`).
+- Only add new `@line_profiler.profile` decorators to functions you plan to inspect next; remove or collapse them after addressing bottlenecks to keep noise low.
+- Stay mindful of the 20-run cap per session—log each attempt and stop early if findings are clear.
