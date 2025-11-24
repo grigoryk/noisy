@@ -134,6 +134,10 @@ class AudioVisualizer:
         plt.rcParams['xtick.color'] = self.border_color
         plt.rcParams['ytick.color'] = self.border_color
         self.fig = plt.figure(figsize=(16, 9), facecolor=self.background_color)
+        canvas = getattr(self.fig, 'canvas', None)
+        manager = getattr(canvas, 'manager', None)
+        if manager and hasattr(manager, 'set_window_title'):
+            manager.set_window_title('Noisy – Live Audio Visualizer')
         self.fig.subplots_adjust(left=0.06, right=0.78, top=0.94, bottom=0.06)
         
         gs = self.fig.add_gridspec(3, 1, height_ratios=[1.5, 1, 1.5], hspace=0.2)
