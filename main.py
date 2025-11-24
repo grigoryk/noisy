@@ -51,6 +51,8 @@ class AudioVisualizer:
         self.voice_amplification = 1.6  # amplify voice magnitudes for visibility
         self.voice_radius_base = 15
         self.voice_radius_max = 60
+        self.noise_radius_base = 10
+        self.noise_radius_max = 45
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
@@ -99,6 +101,8 @@ class AudioVisualizer:
         self.bands_noise_floor_history = []
         self.voice_bar_colors = None
         self.voice_bar_heights = None
+        self.noise_bar_colors = None
+        self.noise_bar_heights = None
         voice_freq_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
         self.voice_bin_centers = (voice_freq_edges[:-1] + voice_freq_edges[1:]) / 2
         voice_angle_edges = np.linspace(0, 2 * np.pi, self.voice_num_bins + 1)
@@ -107,6 +111,10 @@ class AudioVisualizer:
         self.voice_vertices = None
         self.voice_collection = None
         self.voice_paths = None
+        self.noise_vertices = None
+        self.noise_collection = None
+        self.noise_paths = None
+        self.prev_noise_levels = None
         self.bars_colors = None
         self.bars_heights = None
         self.color_change_epsilon = 1e-3
@@ -145,16 +153,19 @@ class AudioVisualizer:
         self.ax_spectrogram = self.fig.add_subplot(gs[0], facecolor=self.background_color)
         self.ax_wave = self.fig.add_subplot(gs[1], facecolor=self.background_color)
         
-        # Split bottom row into voice (1/3) and full range (2/3)
+        # Split bottom row into voice polar (1/3) and a right block that contains bars + noise polar
         gs_bottom = gs[2].subgridspec(1, 2, width_ratios=[1, 2], wspace=0.15)
         self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], projection='polar', facecolor=self.background_color)
-        self.ax_bars = self.fig.add_subplot(gs_bottom[1], facecolor=self.background_color)
+        right_spec = gs_bottom[1].subgridspec(1, 2, width_ratios=[1.6, 1], wspace=0.25)
+        self.ax_bars = self.fig.add_subplot(right_spec[0], facecolor=self.background_color)
+        self.ax_noise_bars = self.fig.add_subplot(right_spec[1], projection='polar', facecolor=self.background_color)
         
         self._configure_frequency_bins(self.num_bins)
         
         self.setup_waveform()
         self.setup_spectrogram()
         self.setup_voice_frequency_bands()
+        self.setup_noise_frequency_bands()
         self.setup_frequency_bands()
         self.setup_fps_display()
         self.setup_frequency_tuning_controls()
@@ -246,6 +257,21 @@ class AudioVisualizer:
         self.ax_voice_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
         for label in self.ax_voice_bars.get_xticklabels() + self.ax_voice_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
+
+    def setup_noise_frequency_bands(self):
+        self.ax_noise_bars.set_ylim(self.noise_radius_base, self.noise_radius_max)
+        self.ax_noise_bars.set_theta_zero_location('N')
+        self.ax_noise_bars.set_theta_direction(-1)
+        self.ax_noise_bars.set_facecolor(self.background_color)
+        self.ax_noise_bars.grid(True, alpha=0.15, color=self.border_color)
+        self.ax_noise_bars.spines['polar'].set_visible(False)
+        self.ax_noise_bars.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
+        self.ax_noise_bars.set_xticklabels(['250', '500', '750', '1000'])
+        self.ax_noise_bars.set_yticks([20, 35, 50])
+        self.ax_noise_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
+        for label in self.ax_noise_bars.get_xticklabels() + self.ax_noise_bars.get_yticklabels():
+            label.set_alpha(self.label_alpha)
+        self.ax_noise_bars.set_title('NOISE', color=self.text_color, fontsize=self.label_fontsize, pad=10, alpha=0.6)
     
     def setup_frequency_bands(self):
         self.ax_bars.set_xlim(0, self.bands_max_freq)
@@ -657,6 +683,20 @@ class AudioVisualizer:
         self.voice_vertices[:, 1, 1] = heights
         self.voice_vertices[:, 2, 1] = heights
         return self.voice_vertices
+
+    def _update_noise_bar_vertices(self, heights):
+        if self.noise_vertices is None:
+            count = len(heights)
+            self.noise_vertices = np.zeros((count, 4, 2))
+            self.noise_vertices[:, 0, 0] = self.voice_theta_left
+            self.noise_vertices[:, 1, 0] = self.voice_theta_left
+            self.noise_vertices[:, 2, 0] = self.voice_theta_right
+            self.noise_vertices[:, 3, 0] = self.voice_theta_right
+        self.noise_vertices[:, 0, 1] = self.noise_radius_base
+        self.noise_vertices[:, 3, 1] = self.noise_radius_base
+        self.noise_vertices[:, 1, 1] = heights
+        self.noise_vertices[:, 2, 1] = heights
+        return self.noise_vertices
     
     @line_profiler.profile
     def update_spectrogram(self, freqs, magnitude_db):
@@ -698,6 +738,7 @@ class AudioVisualizer:
             per_bin_noise = np.full_like(bin_inputs, percentile_value)
 
         per_bin_noise = np.minimum(per_bin_noise, bin_inputs)
+        self._update_noise_floor_display(per_bin_noise)
         signal_above_noise = bin_inputs - per_bin_noise - self.voice_noise_threshold
         bin_magnitudes = np.maximum(signal_above_noise, 0) * self.voice_amplification
         
@@ -738,6 +779,49 @@ class AudioVisualizer:
                 color_changes, self.voice_bar_colors = self._color_change_mask(self.voice_bar_colors, colors)
                 if np.any(color_changes):
                     self.voice_collection.set_facecolor(self.voice_bar_colors)
+
+    def _update_noise_floor_display(self, noise_levels):
+        if noise_levels is None or noise_levels.size == 0 or not hasattr(self, 'ax_noise_bars'):
+            return
+        levels = np.array(noise_levels, dtype=float)
+        finite_mask = np.isfinite(levels)
+        if not np.any(finite_mask):
+            return
+        min_val = np.min(levels[finite_mask])
+        max_val = np.max(levels[finite_mask])
+        span = max(max_val - min_val, 1.0)
+        normalized = (levels - min_val) / span
+        normalized = np.clip(normalized, 0, 1)
+        display_heights = self.noise_radius_base + normalized * (self.noise_radius_max - self.noise_radius_base)
+        if self.prev_noise_levels is not None:
+            display_heights = self.bands_smoothing * self.prev_noise_levels + (1 - self.bands_smoothing) * display_heights
+        self.prev_noise_levels = display_heights
+        colors = self.bands_colormap(normalized)
+        update_colors = self.should_update_colors or self.noise_bar_colors is None
+        if self.noise_collection is None:
+            self.noise_bar_heights = display_heights.copy()
+            verts = self._update_noise_bar_vertices(self.noise_bar_heights)
+            self.noise_bar_colors = colors.copy()
+            self.noise_collection = PolyCollection(verts, facecolors=self.noise_bar_colors,
+                                                   edgecolors='none', alpha=0.65, closed=True)
+            self.ax_noise_bars.add_collection(self.noise_collection)
+            self.noise_paths = self.noise_collection.get_paths()
+        else:
+            height_changes, self.noise_bar_heights = self._height_change_mask(self.noise_bar_heights, display_heights)
+            if np.any(height_changes):
+                changed = np.flatnonzero(height_changes)
+                for idx in changed:
+                    height = self.noise_bar_heights[idx]
+                    vertices = self.noise_paths[idx].vertices
+                    vertices[1, 1] = height
+                    vertices[2, 1] = height
+                if self.noise_vertices is not None:
+                    self.noise_vertices[changed, 1, 1] = self.noise_bar_heights[changed]
+                    self.noise_vertices[changed, 2, 1] = self.noise_bar_heights[changed]
+            if update_colors:
+                color_changes, self.noise_bar_colors = self._color_change_mask(self.noise_bar_colors, colors)
+                if np.any(color_changes):
+                    self.noise_collection.set_facecolor(self.noise_bar_colors)
     
     @line_profiler.profile
     def update_frequency_bands(self, visible_freqs, visible_magnitude):

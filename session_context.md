@@ -8,9 +8,9 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 ### Visual Layout (3 rows)
 1. **Top (1.5x height)**: Mel-scaled spectrogram (0-8000 Hz)
 2. **Middle (1x height)**: Waveform with dynamic scaling
-3. **Bottom (1.5x height)**: Split into two panels
+3. **Bottom (1.5x height)**: Voice polar chart on the left (1/3 width) plus a right block (2/3 width) that stacks the rectangular bars beside a dedicated noise polar chart
    - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0-2000 Hz)
-   - **Right (2/3 width)**: Full range frequency bars (0-8000 Hz)
+   - **Right block**: Full range frequency bars (0-8000 Hz) plus a noise polar chart sharing the voice bins so ambient energy is visible separately
 
 ### Color Palette - Deep Ocean Purple Theme
 - Background: `#0a1628` (deep navy)
@@ -49,7 +49,13 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - 3 magnitude markers (30, 45, 60 dB)
 - Starts at top (12 o'clock), goes clockwise
 
-#### 4. Full Range Frequency Bars
+#### 4. Noise Polar Chart (NEW)
+- Shares the same 30 bin geometry as the voice chart but visualizes the tracked per-bin baseline directly
+- Radii span 10–45 so the noise floor stays tucked inside the voice bars yet still readable
+- Uses the same colormap, normalized to the current frame’s noise distribution and smoothed with the band EMA so shifts feel fluid
+- Gives instant context for how the adaptive subtraction behaves and whether ambient noise is creeping into specific bins
+
+#### 5. Full Range Frequency Bars
 - 50 bins covering 0-8000 Hz
 - Interpolated magnitude values for smooth visualization
 - Color-mapped by magnitude
@@ -57,7 +63,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - 60 dB magnitude offset/scale keep palette responsive while peaks can extend higher
 - Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, wave fade, spectrogram bin count, voice gain, and the spectrogram Hz span in real time; panel can be hidden via toggle button
 
-#### 5. Tuning Controls (Right Panel)
+#### 6. Tuning Controls (Right Panel)
 - Hide/Show button toggles the entire panel
 - Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, Spectro Bins, Spectro Hz Range
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
@@ -144,6 +150,7 @@ bars = signal * voice_amplification
 23. Updated README and this document to describe the per-bin voice noise logic and slider-clearing behavior
 24. Added tuning sliders for `voice_noise_history_size` and `voice_noise_threshold` so ambient suppression can be adjusted live
 25. Added hover tooltips to every tuning control so users get inline descriptions without leaving the UI
+26. Added a dedicated noise polar chart that renders the per-bin noise baseline in real time next to the full-range bars and wired it into the same smoothing/percentile pipeline as the voice view
 
 ## File Structure
 ```

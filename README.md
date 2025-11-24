@@ -12,6 +12,7 @@ Minimalist realtime visualizer built with Python, matplotlib, numpy, scipy, and 
 - **Waveform (middle)** – Raw signal after an 80 Hz high-pass filter. The vertical scale auto-adjusts with a smoothed ±zoom indicator, and recent frames linger as translucent trails whose fade speed is slider-controlled.
 - **Frequency Panels (bottom)**
 	- **Voice Polar Chart (left)** – 30 bins from 0–2000 Hz arranged radially. Magnitudes are interpolated at the bin centers, appended to a 45-frame per-bin history, and once five frames exist the 25th-percentile baseline is subtracted (earlier frames fall back to a frame-level 10th percentile). Anything more than 8 dB above that floor is multiplied by the voice gain slider (default ×1.6) and rendered between radius 15–60.
+	- **Noise Polar Chart (bottom-right)** – Shares the same bins as the voice chart but displays the tracked per-bin baseline directly. Baselines are normalized within the current frame, smoothed, and drawn between radius 10–45 with the same purple palette so you can watch ambient noise patterns wrap around the circle in real time.
 	- **Full-Range Bars (right)** – 50 rectangular bins from 0–8000 Hz. Magnitudes get a 60 dB offset, subtract the rolling 35th-percentile baseline (4-frame history), and smooth with an EMA before recoloring.
 
 ## Signal Processing
@@ -20,6 +21,7 @@ Minimalist realtime visualizer built with Python, matplotlib, numpy, scipy, and 
 - Windowed FFT (Hann) with exponential smoothing on magnitudes to avoid flicker.
 - Custom mel filterbank caches to reduce per-frame cost.
 - Adaptive percentile-based noise suppression for both voice and bar charts.
+- Per-bin ambient noise floor visualization mirrors the voice bins so you can see filtered noise separate from speech energy.
 
 ## Tuning Controls
 
