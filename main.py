@@ -37,9 +37,10 @@ class AudioVisualizer:
         
         # Voice frequency bands tuning
         self.voice_num_bins = 30  # bars for voice range
-        self.voice_max_freq = 1000  # focus on fundamental voice frequencies (Hz)
-        self.voice_noise_threshold = 15  # dB above noise floor to show a point
-        self.voice_noise_history_size = 50  # frames to track for noise floor estimation
+        self.voice_max_freq = 2000  # focus on fundamental voice frequencies (Hz)
+        self.voice_noise_threshold = 8  # dB above noise floor to show (lower = more detail)
+        self.voice_noise_history_size = 1  # frames to track for noise floor estimation
+        self.voice_amplification = 1.6  # amplify voice magnitudes for visibility
         
         # Spectrogram tuning
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
@@ -145,7 +146,7 @@ class AudioVisualizer:
     
     def setup_voice_frequency_bands(self):
         self.voice_bars = None
-        self.ax_voice_bars.set_ylim(0, 60)
+        self.ax_voice_bars.set_ylim(15, 60)  # Start bars away from center for bigger appearance
         self.ax_voice_bars.set_theta_zero_location('N')
         self.ax_voice_bars.set_theta_direction(-1)
         self.ax_voice_bars.set_facecolor(self.background_color)
@@ -155,7 +156,7 @@ class AudioVisualizer:
         self.ax_voice_bars.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
         self.ax_voice_bars.set_xticklabels(['250', '500', '750', '1000'])
         # Reduce radial labels
-        self.ax_voice_bars.set_yticks([20, 40, 60])
+        self.ax_voice_bars.set_yticks([30, 45, 60])
         self.ax_voice_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
         for label in self.ax_voice_bars.get_xticklabels() + self.ax_voice_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
@@ -243,8 +244,8 @@ class AudioVisualizer:
         voice_freqs = visible_freqs[voice_mask]
         voice_magnitude = visible_magnitude[voice_mask]
         
-        # Track noise floor over time
-        current_noise_floor = np.percentile(voice_magnitude, 20)
+        # Track noise floor over time (use lower percentile to be less aggressive)
+        current_noise_floor = np.percentile(voice_magnitude, 10)
         self.voice_noise_floor_history.append(current_noise_floor)
         if len(self.voice_noise_floor_history) > self.voice_noise_history_size:
             self.voice_noise_floor_history.pop(0)
@@ -256,10 +257,10 @@ class AudioVisualizer:
         bin_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
-        # Interpolate magnitude at bin centers
-        bin_magnitudes = np.interp(bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor
+        # Interpolate magnitude at bin centers and amplify for better visibility
+        bin_magnitudes = (np.interp(bin_centers, voice_freqs, voice_magnitude) - adaptive_noise_floor) * self.voice_amplification
         
-        # Filter out bins below threshold
+        # Filter out bins below threshold (reduced for more detail)
         threshold = self.voice_noise_threshold
         bin_magnitudes = np.maximum(bin_magnitudes - threshold, 0)
         
@@ -376,7 +377,7 @@ class AudioVisualizer:
         with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
             manager = plt.get_current_fig_manager()
             manager.full_screen_toggle()
-            ani = FuncAnimation(self.fig, self.update, interval=self.update_interval_ms, blit=False, cache_frame_data=False)
+            ani = FuncAnimation(self.fig, self.update, interval=self.update_interval_ms, blit=False, cache_frame_data=True)
             plt.show()
 
 
