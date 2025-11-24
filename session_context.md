@@ -119,6 +119,9 @@ threshold = adaptive_noise_floor + 8
 13. Added matplotlib slider UI to tweak frequency-bar tuning parameters live (with hide/show toggle)
 14. Added spectrogram frequency RangeSlider to zoom into specific Hz spans without restarting the app
 15. Restricted the range slider to the spectrogram and slice mel bins dynamically so zoomed views actually change what the top panel shows, always re-sampling to keep at least 40 bins visible
+16. Added a Spectro Bins slider tied to `spectrogram_min_view_bins` and shifted the tuning panel ~10% left to keep the controls fully visible
+17. Smoothed the Spectro Hz range slider by always sampling neighboring mel bins so the max handle no longer causes sudden jumps near 7.5 kHz
+18. Added adaptive resampling that interpolates the spectrogram view to a continuously-scaled bin count, eliminating visual jumps when the slider span changes
 
 ## File Structure
 ```
