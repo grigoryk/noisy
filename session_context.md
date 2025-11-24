@@ -171,6 +171,7 @@ bars = signal * voice_amplification
 35. Boosted the enabled toggle styling with brighter pill backgrounds, bold labels, and larger glowing indicators so active states pop immediately
 36. Rebuilt the CheckButtons styling to override Matplotlib’s scatter-based frames so the purple pills actually render (hidden default checks, recolored frames, resized indicators)
 37. Simplified the toggle visuals to small circular badges anchored next to each label, keeping the glowing state indicator without drowning the text
+38. README now documents the dual spectrogram layout plus the subtraction/noise visibility toggles and aggressiveness sliders so new users can find those controls
 
 ## File Structure
 ```
