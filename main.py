@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
+import argparse
+import time
+
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.signal import butter, sosfilt
-import time
 import line_profiler
 
 
@@ -402,15 +404,35 @@ class AudioVisualizer:
         self.audio_buffer = filtered.copy()
     
     @line_profiler.profile
-    def run(self, device_id):
-        with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
-            manager = plt.get_current_fig_manager()
-            manager.full_screen_toggle()
-            ani = FuncAnimation(self.fig, self.update, interval=self.update_interval_ms, blit=False, cache_frame_data=True)
-            plt.show()
+    def run(self, device_id, run_for=None):
+        stop_timer = None
+        duration = run_for if run_for and run_for > 0 else None
+        if duration:
+            stop_timer = self.fig.canvas.new_timer(interval=int(duration * 1000))
+            stop_timer.single_shot = True
+            stop_timer.add_callback(plt.close, self.fig)
+            stop_timer.start()
+        try:
+            with sd.InputStream(device=device_id, callback=self.audio_callback, channels=1, samplerate=self.sample_rate):
+                manager = plt.get_current_fig_manager()
+                manager.full_screen_toggle()
+                self.animation = FuncAnimation(self.fig, self.update, interval=self.update_interval_ms,
+                                               blit=False, cache_frame_data=True)
+                plt.show()
+        finally:
+            if stop_timer:
+                stop_timer.stop()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Audio Visualizer")
+    parser.add_argument("--run-for", type=float, default=None, metavar="SECONDS",
+                        help="Automatically stop after SECONDS (useful for profiling).")
+    return parser.parse_args()
 
 
 def main():
+    args = parse_args()
     try:
         print("Available audio devices:")
         devices = sd.query_devices()
@@ -442,7 +464,7 @@ def main():
         print("="*60 + "\n")
         
         visualizer = AudioVisualizer(sample_rate)
-        visualizer.run(device_id)
+        visualizer.run(device_id, run_for=args.run_for)
     except KeyboardInterrupt:
         print("\nStopped audio capture")
     except Exception as e:
