@@ -122,6 +122,7 @@ threshold = adaptive_noise_floor + 8
 16. Added a Spectro Bins slider tied to `spectrogram_min_view_bins` and shifted the tuning panel ~10% left to keep the controls fully visible
 17. Smoothed the Spectro Hz range slider by always sampling neighboring mel bins so the max handle no longer causes sudden jumps near 7.5 kHz
 18. Added adaptive resampling that interpolates the spectrogram view to a continuously-scaled bin count, eliminating visual jumps when the slider span changes
+19. Removed the unused `mel_noise_floor` setting and redundant cache resets in the setup helpers to reduce clutter without changing behavior
 
 ## File Structure
 ```

@@ -61,7 +61,6 @@ class AudioVisualizer:
         self.mel_banks = 40  # number of frequency bands
         self.mel_freq_low = 80  # lowest frequency (Hz) - captures voice fundamentals
         self.mel_freq_high = 8000  # highest frequency (Hz) - captures consonants
-        self.mel_noise_floor = 30  # percentile for noise removal (higher = cleaner)
         
         # Audio processing
         self.highpass_freq = highpass_freq  # filters out frequencies below this (Hz)
@@ -193,11 +192,6 @@ class AudioVisualizer:
             label.set_alpha(self.label_alpha)
     
     def setup_voice_frequency_bands(self):
-        self.voice_collection = None
-        self.voice_vertices = None
-        self.voice_paths = None
-        self.voice_bar_colors = None
-        self.voice_bar_heights = None
         self.ax_voice_bars.set_ylim(self.voice_radius_base, self.voice_radius_max)  # Start bars away from center
         self.ax_voice_bars.set_theta_zero_location('N')
         self.ax_voice_bars.set_theta_direction(-1)
@@ -214,11 +208,6 @@ class AudioVisualizer:
             label.set_alpha(self.label_alpha)
     
     def setup_frequency_bands(self):
-        self.bars_collection = None
-        self.bars_vertices = None
-        self.bars_paths = None
-        self.bars_colors = None
-        self.bars_heights = None
         self.ax_bars.set_xlim(0, self.bands_max_freq)
         ylabel = self.ax_bars.set_ylabel('Magnitude (dB)', color=self.text_color)
         ylabel.set_alpha(self.label_alpha)
