@@ -61,6 +61,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Hide/Show button toggles the entire panel
 - Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, Spectro Bins, Spectro Hz Range
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
+- Hover overlays explain what each label/slider adjusts when you pause over the control
 
 ### Configuration Variables (Extracted)
 - `label_alpha = 0.35` - opacity for all labels/ticks
@@ -142,6 +143,7 @@ bars = signal * voice_amplification
 22. Reworked the voice polar chart to track per-bin percentile noise floors (45-frame history) so ambient noise stays suppressed
 23. Updated README and this document to describe the per-bin voice noise logic and slider-clearing behavior
 24. Added tuning sliders for `voice_noise_history_size` and `voice_noise_threshold` so ambient suppression can be adjusted live
+25. Added hover tooltips to every tuning control so users get inline descriptions without leaving the UI
 
 ## File Structure
 ```

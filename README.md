@@ -28,6 +28,7 @@ On the right edge, a toggleable panel exposes live sliders:
 - Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade (trail decay).
 - Voice controls: Voice Gain, Voice Noise Frames (history length), Voice Threshold (dB gap before drawing bars).
 - Spectro Bins and a Spectro Hz RangeSlider for spectrogram density/zoom.
+- Hovering any label pops a minimalist tooltip describing what that control does, so you can tune by feel without referencing docs.
 
 ## Running It
 

@@ -279,20 +279,31 @@ class AudioVisualizer:
         self.tuning_toggle_button.on_clicked(self._toggle_tuning_controls)
         current_top = top - button_height - 0.012
         slider_defs = [
-            ('Baseline %', 0, 60, self.bands_baseline_percentile, 1, self._on_baseline_slider),
-            ('Noise Frames', 1, 10, self.bands_noise_history_size, 1, self._on_noise_history_slider),
-            ('Offset (dB)', 20, 100, self.bands_magnitude_offset, 1, self._on_offset_slider),
-            ('Scale (dB)', 20, 120, self.bands_magnitude_scale, 1, self._on_scale_slider),
-            ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider),
-            ('Wave Fade', 0.0, 0.99, self.waveform_fade_decay, 0.01, self._on_waveform_fade_slider),
-            ('Voice Gain', 0.5, 3.0, self.voice_amplification, 0.05, self._on_voice_gain_slider),
-            ('Voice Noise Frames', 5, 90, self.voice_noise_history_size, 1, self._on_voice_noise_history_slider),
-            ('Voice Threshold', 0.0, 18.0, self.voice_noise_threshold, 0.5, self._on_voice_threshold_slider),
-            ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider),
+            ('Baseline %', 0, 60, self.bands_baseline_percentile, 1, self._on_baseline_slider,
+             'Trims this percentile of bar magnitudes. More = stricter noise cut, less = fuller bars'),
+            ('Noise Frames', 1, 10, self.bands_noise_history_size, 1, self._on_noise_history_slider,
+             'Rolling frames for bar noise floor. More = steadier baseline, less = quicker reaction'),
+            ('Offset (dB)', 20, 100, self.bands_magnitude_offset, 1, self._on_offset_slider,
+             'Adds dB offset before clipping. More = brighter low notes, less = more headroom'),
+            ('Scale (dB)', 20, 120, self.bands_magnitude_scale, 1, self._on_scale_slider,
+             'dB span for bar colors. More = softer gradients, less = more contrast'),
+            ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider,
+             'EMA between frames. More = smoother motion, less = snappier response'),
+            ('Wave Fade', 0.0, 0.99, self.waveform_fade_decay, 0.01, self._on_waveform_fade_slider,
+             'Trail decay per frame. More = trails linger, less = almost no afterglow'),
+            ('Voice Gain', 0.5, 3.0, self.voice_amplification, 0.05, self._on_voice_gain_slider,
+             'Gain after noise removal. More = louder bars, less = quieter bars'),
+            ('Voice Noise Frames', 5, 90, self.voice_noise_history_size, 1, self._on_voice_noise_history_slider,
+             'Frames in voice baseline. More = steadier floor, less = reacts to new noise fast'),
+            ('Voice Threshold', 0.0, 18.0, self.voice_noise_threshold, 0.5, self._on_voice_threshold_slider,
+             'Extra dB before showing. More = only big speech, less = sensitive to quiet sounds'),
+            ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider,
+             'Minimum bins in spectrogram. More = smoother view, less = blockier but faster'),
         ]
         self.tuning_sliders = []
         self.tuning_controls_visible = True
-        for label, vmin, vmax, init, step, callback in slider_defs:
+        self._ensure_tuning_tooltip_support()
+        for label, vmin, vmax, init, step, callback, description in slider_defs:
             ax = self.fig.add_axes([panel_left, current_top - slider_height, panel_width, slider_height])
             ax.set_facecolor(self.background_color)
             slider = Slider(ax=ax, label=label, valmin=vmin, valmax=vmax, valinit=init,
@@ -301,6 +312,7 @@ class AudioVisualizer:
             slider.label.set_color(self.text_color)
             slider.valtext.set_color(self.text_color)
             self.tuning_sliders.append(slider)
+            self._register_tuning_hover(slider.label, description)
             current_top -= slider_height + slider_spacing
         range_height = 0.035
         range_ax = self.fig.add_axes([panel_left, current_top - range_height, panel_width, range_height])
@@ -314,6 +326,8 @@ class AudioVisualizer:
         self.spectrogram_range_slider.label.set_color(self.text_color)
         self.spectrogram_range_slider.valtext.set_color(self.text_color)
         self.tuning_sliders.append(self.spectrogram_range_slider)
+        self._register_tuning_hover(self.spectrogram_range_slider.label,
+                                    'Choose the spectrogram frequency window (drag both handles)')
         self._set_tuning_controls_visible(True)
     
     def _set_tuning_controls_visible(self, visible):
@@ -332,6 +346,53 @@ class AudioVisualizer:
         self.tuning_controls_visible = not getattr(self, 'tuning_controls_visible', True)
         self._set_tuning_controls_visible(self.tuning_controls_visible)
     
+    def _ensure_tuning_tooltip_support(self):
+        if hasattr(self, 'tuning_hover_regions') and hasattr(self, 'tuning_tooltip_text'):
+            return
+        self.tuning_hover_regions = []
+        self.tuning_tooltip_text = self.fig.text(
+            0, 0, '', fontsize=self.label_fontsize, color=self.text_color, ha='left', va='bottom',
+            alpha=0.9,
+            bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color, edgecolor=self.border_color, alpha=0.85),
+            visible=False,
+        )
+        self.fig.canvas.mpl_connect('motion_notify_event', self._on_tuning_hover_event)
+
+    def _register_tuning_hover(self, artist, description):
+        if not hasattr(self, 'tuning_hover_regions'):
+            self._ensure_tuning_tooltip_support()
+        self.tuning_hover_regions.append({'artist': artist, 'description': description})
+
+    def _on_tuning_hover_event(self, event):
+        if not hasattr(self, 'tuning_hover_regions') or self.tuning_hover_regions is None:
+            return
+        for target in self.tuning_hover_regions:
+            artist = target['artist']
+            if not artist.get_visible():
+                continue
+            contains, _ = artist.contains(event)
+            if contains:
+                self._show_tuning_tooltip(target['description'], event)
+                return
+        self._hide_tuning_tooltip()
+
+    def _show_tuning_tooltip(self, text, event):
+        if not hasattr(self, 'tuning_tooltip_text') or event.x is None or event.y is None:
+            return
+        fig_x, fig_y = self.fig.transFigure.inverted().transform((event.x, event.y))
+        fig_x = min(max(fig_x + 0.005, 0.0), 0.98)
+        fig_y = min(max(fig_y + 0.012, 0.0), 0.96)
+        self.tuning_tooltip_text.set_position((fig_x, fig_y))
+        self.tuning_tooltip_text.set_text(text)
+        if not self.tuning_tooltip_text.get_visible():
+            self.tuning_tooltip_text.set_visible(True)
+        self.fig.canvas.draw_idle()
+
+    def _hide_tuning_tooltip(self):
+        if hasattr(self, 'tuning_tooltip_text') and self.tuning_tooltip_text.get_visible():
+            self.tuning_tooltip_text.set_visible(False)
+            self.fig.canvas.draw_idle()
+
     def _on_baseline_slider(self, value):
         self.bands_baseline_percentile = float(value)
         self.bands_noise_floor_history.clear()
