@@ -30,6 +30,9 @@ class AudioVisualizer:
         self.waveform_zoom = 10 # how much padding around signal (higher = more padding, less jumpy)
         self.ylim_history_size = 8  # how quickly zoom adjusts to loudness changes (higher = slower)
         self.ylim_smoothing = 0.8  # how smooth zoom transitions are (higher = smoother)
+        self.waveform_fade_decay = 0.0  # 0 = instant, closer to 1 = slower fade
+        self.waveform_trail_alpha = 0.5
+        self.waveform_trail_min_alpha = 0.015
         
         # Frequency bands tuning
         self.num_bins = num_bins  # how many bars to display (higher = more detail)
@@ -79,6 +82,8 @@ class AudioVisualizer:
         self.waveform_x = None
         self.waveform_len = 0
         self.waveform_ylim_epsilon = 1e-3
+        self.waveform_last_data = None
+        self.waveform_trail_lines = []
         # Create custom colormaps from palette for all visualizations
         self.spectrogram_colormap = LinearSegmentedColormap.from_list('purple_spec', self.palette)
         self.bands_colormap = LinearSegmentedColormap.from_list('purple_bands', self.palette)
@@ -154,6 +159,8 @@ class AudioVisualizer:
         self.line_wave, = self.ax_wave.plot([], [], lw=self.waveform_linewidth, color=self.waveform_color, alpha=self.waveform_alpha)
         self.ax_wave.set_ylim(-1, 1)
         self.ax_wave.set_xticks([])
+        self.waveform_trail_lines = []
+        self.waveform_last_data = None
         
         # Add scale text indicator
         self.scale_text = self.ax_wave.text(0.02, 0.95, '', transform=self.ax_wave.transAxes,
@@ -167,6 +174,35 @@ class AudioVisualizer:
         self.ax_wave.tick_params(axis='y', colors=self.border_color, labelsize=self.label_fontsize, which='both')
         for label in self.ax_wave.get_yticklabels():
             label.set_alpha(self.label_alpha)
+
+    def _decay_waveform_trails(self):
+        if not self.waveform_trail_lines:
+            return
+        if self.waveform_fade_decay <= 0:
+            for line in self.waveform_trail_lines:
+                line.remove()
+            self.waveform_trail_lines.clear()
+            return
+        kept = []
+        for line in self.waveform_trail_lines:
+            new_alpha = line.get_alpha() * self.waveform_fade_decay
+            if new_alpha <= self.waveform_trail_min_alpha:
+                line.remove()
+                continue
+            line.set_alpha(new_alpha)
+            kept.append(line)
+        self.waveform_trail_lines = kept
+
+    def _add_waveform_trail(self, data):
+        if data is None or self.waveform_x is None or self.waveform_fade_decay <= 0:
+            return
+        trail_line, = self.ax_wave.plot(self.waveform_x, data, lw=self.waveform_linewidth,
+                                        color=self.waveform_color, alpha=self.waveform_trail_alpha)
+        trail_line.set_zorder(self.line_wave.get_zorder() - 1)
+        self.waveform_trail_lines.append(trail_line)
+        if len(self.waveform_trail_lines) > 60:
+            oldest = self.waveform_trail_lines.pop(0)
+            oldest.remove()
     
     def setup_spectrogram(self):
         # Use mel-scale frequency bins for perceptually meaningful spacing
@@ -244,6 +280,7 @@ class AudioVisualizer:
             ('Offset (dB)', 20, 100, self.bands_magnitude_offset, 1, self._on_offset_slider),
             ('Scale (dB)', 20, 120, self.bands_magnitude_scale, 1, self._on_scale_slider),
             ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider),
+            ('Wave Fade', 0.0, 0.99, self.waveform_fade_decay, 0.01, self._on_waveform_fade_slider),
             ('Voice Gain', 0.5, 3.0, self.voice_amplification, 0.05, self._on_voice_gain_slider),
             ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider),
         ]
@@ -313,6 +350,13 @@ class AudioVisualizer:
         self.bands_smoothing = float(value)
         self.should_update_colors = True
     
+    def _on_waveform_fade_slider(self, value):
+        new_value = np.clip(float(value), 0.0, 0.99)
+        self.waveform_fade_decay = new_value
+        if new_value <= 0:
+            self.waveform_last_data = None
+            self._decay_waveform_trails()
+
     def _on_voice_gain_slider(self, value):
         self.voice_amplification = max(0.1, float(value))
         self.prev_voice_bin_magnitudes = None
@@ -341,11 +385,14 @@ class AudioVisualizer:
     @line_profiler.profile
     def update_waveform(self):
         buffer_len = len(self.audio_buffer)
+        self._decay_waveform_trails()
         if self.waveform_len != buffer_len or self.waveform_x is None:
             self.waveform_x = np.arange(buffer_len)
             self.waveform_len = buffer_len
             self.ax_wave.set_xlim(0, buffer_len)
         self.line_wave.set_data(self.waveform_x, self.audio_buffer)
+        self._add_waveform_trail(self.waveform_last_data)
+        self.waveform_last_data = self.audio_buffer.copy()
         
         max_amp = np.max(np.abs(self.audio_buffer))
         if max_amp > 0:

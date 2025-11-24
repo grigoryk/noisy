@@ -34,6 +34,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - 8-frame history for smooth zoom adaptation
 - 0.8 smoothing factor for transitions
 - Scale indicator shows current zoom level
+- Optional trail fade keeps recent frames visible with slider-controlled exponential decay
 
 #### 3. Voice Polar Chart (NEW)
 - **Polar bar chart** showing 0-2000 Hz fundamentals
@@ -53,11 +54,11 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Color-mapped by magnitude
 - Bottom 35th percentile treated as adaptive noise floor (rolling window of 4 frames) before visualization
 - 60 dB magnitude offset/scale keep palette responsive while peaks can extend higher
-- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, spectrogram bin count, voice gain, and the spectrogram Hz span in real time; panel can be hidden via toggle button
+- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, wave fade, spectrogram bin count, voice gain, and the spectrogram Hz span in real time; panel can be hidden via toggle button
 
 #### 5. Tuning Controls (Right Panel)
 - Hide/Show button toggles the entire panel
-- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Voice Gain, Spectro Bins, Spectro Hz Range
+- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Spectro Bins, Spectro Hz Range
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
 
 ### Configuration Variables (Extracted)
@@ -65,6 +66,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `label_fontsize = 8` - font size for labels
 - `waveform_linewidth = 1.5` - waveform line thickness
 - `waveform_alpha = 0.9` - waveform line opacity
+- `waveform_fade_decay = 0.0` - slider-adjustable waveform trail decay factor
 - `voice_noise_threshold = 8` - dB above noise floor to display
 - `voice_noise_history_size = 1` - frames for noise tracking
 - `voice_amplification = 1.6` - multiplier to boost polar bars (tunable via UI)
@@ -130,6 +132,7 @@ threshold = adaptive_noise_floor + 8
 18. Added adaptive resampling that interpolates the spectrogram view to a continuously-scaled bin count, eliminating visual jumps when the slider span changes
 19. Removed the unused `mel_noise_floor` setting and redundant cache resets in the setup helpers to reduce clutter without changing behavior
 20. Added a Voice Gain slider that adjusts `voice_amplification` so polar bars can be boosted or tamed live
+21. Added waveform trails plus a Wave Fade slider so previous frames linger and fade smoothly
 
 ## File Structure
 ```

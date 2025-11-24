@@ -9,7 +9,7 @@ Minimalist realtime visualizer built with Python, matplotlib, numpy, scipy, and 
 ## Views
 
 - **Mel Spectrogram (top)** – 40 mel banks spanning 80–8000 Hz. Frames are de-noised with a 30th-percentile noise floor, raised to power 1.5 for contrast, and can be zoomed with a range slider that re-samples bins so the zoomed view always stays smooth.
-- **Waveform (middle)** – Raw signal after an 80 Hz high-pass filter. The vertical scale auto-adjusts with a smoothed ±zoom indicator so transients stay readable without manual gain changes.
+- **Waveform (middle)** – Raw signal after an 80 Hz high-pass filter. The vertical scale auto-adjusts with a smoothed ±zoom indicator, and recent frames linger as translucent trails whose fade speed is slider-controlled.
 - **Frequency Panels (bottom)**
 	- **Voice Polar Chart (left)** – 30 bins from 0–2000 Hz arranged radially. Each frame estimates the 10th-percentile noise floor (history size 1), amplifies by a tunable voice gain (default ×1.6), subtracts an 8 dB threshold, and smooths before rendering bars between radius 15–60.
 	- **Full-Range Bars (right)** – 50 rectangular bins from 0–8000 Hz. Magnitudes get a 60 dB offset, subtract the rolling 35th-percentile baseline (4-frame history), and smooth with an EMA before recoloring.
@@ -25,7 +25,7 @@ Minimalist realtime visualizer built with Python, matplotlib, numpy, scipy, and 
 
 On the right edge, a toggleable panel exposes live sliders:
 
-- Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing for the bar chart.
+- Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade (trail decay).
 - Voice Gain for polar amplification.
 - Spectro Bins and a Spectro Hz RangeSlider for spectrogram density/zoom.
 
