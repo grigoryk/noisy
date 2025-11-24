@@ -9,8 +9,8 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 1. **Top (1.5x height)**: Mel-scaled spectrogram (0-8000 Hz)
 2. **Middle (1x height)**: Waveform with dynamic scaling
 3. **Bottom (1.5x height)**: Voice polar chart on the left (1/3 width) plus a right block (2/3 width) that stacks the rectangular bars beside a dedicated noise polar chart
-   - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0-2000 Hz)
-   - **Right block**: Full range frequency bars (0-8000 Hz) plus a noise polar chart sharing the voice bins so ambient energy is visible separately
+   - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0–2000 Hz by default, live-adjustable up to 8 kHz)
+   - **Right block**: Full range frequency bars (0–8000 Hz) plus a noise polar chart sharing the voice bins so ambient energy is visible separately and mirrors the same adjustable ceiling
 
 ### Color Palette - Deep Ocean Purple Theme
 - Background: `#0a1628` (deep navy)
@@ -37,35 +37,29 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Optional trail fade keeps recent frames visible with slider-controlled exponential decay
 
 #### 3. Voice Polar Chart (NEW)
-- **Polar bar chart** showing 0-2000 Hz fundamentals
-- 30 bins arranged radially around circle
+- 30 radial bins covering 0–2000 Hz by default (slider extends ceiling up to 8 kHz or down to 500 Hz)
 - **Adaptive noise filtering**:
- - **Adaptive noise filtering**:
    - Interpolates each frame at 30 bin centers and stores up to 45 frames of history per bin
    - Uses the per-bin 25th-percentile baseline after at least 5 frames; before then it falls back to the frame’s 10th-percentile floor
    - Displays bins only when they clear the baseline by 8 dB and then multiplies by the voice gain slider (default 1.6)
-- Radial offset keeps bars between 15 and 60 units from center so even subtle activity remains visible
-- Minimal labels: 4 frequency markers (250, 500, 750, 1000 Hz)
-- 3 magnitude markers (30, 45, 60 dB)
-- Starts at top (12 o'clock), goes clockwise
+- Radial offset keeps bars between radius 15–60
+- Angle labels (4 positions) track quarter-points of the current Voice Max Hz so ticks always match the selected band
 
 #### 4. Noise Polar Chart (NEW)
-- Shares the same 30 bin geometry as the voice chart but visualizes the tracked per-bin baseline directly
-- Radii span 10–45 so the noise floor stays tucked inside the voice bars yet still readable
-- Uses the same colormap, normalized to the current frame’s noise distribution and smoothed with the band EMA so shifts feel fluid
-- Gives instant context for how the adaptive subtraction behaves and whether ambient noise is creeping into specific bins
+- Shares the same bin geometry as the voice chart but renders the tracked per-bin noise baseline
+- Radii span 10–45 so the floor sits inside the voice energy
+- Normalized each frame and smoothed with the same EMA so it mirrors motion cleanly
+- Automatically follows the Voice Max Hz slider so the noise visualization always matches the speech band you’re monitoring
 
 #### 5. Full Range Frequency Bars
-- 50 bins covering 0-8000 Hz
-- Interpolated magnitude values for smooth visualization
-- Color-mapped by magnitude
-- Bottom 35th percentile treated as adaptive noise floor (rolling window of 4 frames) before visualization
-- 60 dB magnitude offset/scale keep palette responsive while peaks can extend higher
-- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, wave fade, spectrogram bin count, voice gain, and the spectrogram Hz span in real time; panel can be hidden via toggle button
+- 50 rectangular bins across 0–8000 Hz with adaptive percentile noise removal
+- 60 dB offset/scale keep the palette responsive
+- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, wave fade, voice gain, Voice Max Hz, spectrogram bin count, and the spectrogram Hz span in real time; panel can be hidden via toggle button
 
 #### 6. Tuning Controls (Right Panel)
 - Hide/Show button toggles the entire panel
-- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, Spectro Bins, Spectro Hz Range
+- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, **Voice Max Hz**, Spectro Bins, Spectro Hz Range
+- Voice Max Hz simultaneously moves the ceiling for both polar charts so you can focus on fundamentals or include consonants without restarting
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
 - Hover overlays explain what each label/slider adjusts when you pause over the control
 
@@ -78,6 +72,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `voice_noise_threshold = 8` - dB above noise floor to display
 - `voice_noise_history_size = 45` - frames stored per bin for percentile-based noise tracking
 - `voice_amplification = 1.6` - multiplier to boost polar bars (tunable via UI)
+- `voice_max_freq = 2000` - default upper bound for the voice/noise polar charts (slider-adjustable 500–8000 Hz)
 - `bands_baseline_percentile = 35` - dynamic noise floor percentile for full-range bars
 - `bands_noise_history_size = 4` - frames to average baseline
 - `bands_magnitude_offset = 60`, `bands_magnitude_scale = 60`
@@ -151,6 +146,7 @@ bars = signal * voice_amplification
 24. Added tuning sliders for `voice_noise_history_size` and `voice_noise_threshold` so ambient suppression can be adjusted live
 25. Added hover tooltips to every tuning control so users get inline descriptions without leaving the UI
 26. Added a dedicated noise polar chart that renders the per-bin noise baseline in real time next to the full-range bars and wired it into the same smoothing/percentile pipeline as the voice view
+27. Added a Voice Max Hz slider that retunes the voice/noise polar ceiling (and tick labels) live up to 8 kHz
 
 ## File Structure
 ```
@@ -186,7 +182,7 @@ noisy/
 
 ### Observations / Potential Improvements
 - Polar chart currently uses all 30 bins - could be reduced for cleaner look
-- Voice frequency range (0-1000 Hz) captures fundamentals; could extend to ~4000 Hz for consonants
+- Voice frequency range defaults to 0–2000 Hz, but slider now extends to 8 kHz for consonant detail if needed
 - Matplotlib still warns about `cache_frame_data=True` when FuncAnimation length is inferred; user is fine ignoring it for now
 
 ## Profiling Notes (2025-11-23)

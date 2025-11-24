@@ -103,11 +103,10 @@ class AudioVisualizer:
         self.voice_bar_heights = None
         self.noise_bar_colors = None
         self.noise_bar_heights = None
-        voice_freq_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
-        self.voice_bin_centers = (voice_freq_edges[:-1] + voice_freq_edges[1:]) / 2
         voice_angle_edges = np.linspace(0, 2 * np.pi, self.voice_num_bins + 1)
         self.voice_theta_left = voice_angle_edges[:-1]
         self.voice_theta_right = voice_angle_edges[1:]
+        self._configure_voice_bins()
         self.voice_vertices = None
         self.voice_collection = None
         self.voice_paths = None
@@ -249,13 +248,12 @@ class AudioVisualizer:
         self.ax_voice_bars.set_facecolor(self.background_color)
         self.ax_voice_bars.grid(True, alpha=0.2, color=self.border_color)
         self.ax_voice_bars.spines['polar'].set_visible(False)
-        # Reduce number of angle labels
         self.ax_voice_bars.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
-        self.ax_voice_bars.set_xticklabels(['250', '500', '750', '1000'])
         # Reduce radial labels
         self.ax_voice_bars.set_yticks([30, 45, 60])
         self.ax_voice_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
-        for label in self.ax_voice_bars.get_xticklabels() + self.ax_voice_bars.get_yticklabels():
+        self._update_polar_frequency_labels()
+        for label in self.ax_voice_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
 
     def setup_noise_frequency_bands(self):
@@ -266,10 +264,10 @@ class AudioVisualizer:
         self.ax_noise_bars.grid(True, alpha=0.15, color=self.border_color)
         self.ax_noise_bars.spines['polar'].set_visible(False)
         self.ax_noise_bars.set_xticks(np.linspace(0, 2 * np.pi, 4, endpoint=False))
-        self.ax_noise_bars.set_xticklabels(['250', '500', '750', '1000'])
         self.ax_noise_bars.set_yticks([20, 35, 50])
         self.ax_noise_bars.tick_params(colors=self.border_color, labelsize=self.label_fontsize)
-        for label in self.ax_noise_bars.get_xticklabels() + self.ax_noise_bars.get_yticklabels():
+        self._update_polar_frequency_labels()
+        for label in self.ax_noise_bars.get_yticklabels():
             label.set_alpha(self.label_alpha)
         self.ax_noise_bars.set_title('NOISE', color=self.text_color, fontsize=self.label_fontsize, pad=10, alpha=0.6)
     
@@ -323,6 +321,8 @@ class AudioVisualizer:
              'Frames in voice baseline. More = steadier floor, less = reacts to new noise fast'),
             ('Voice Threshold', 0.0, 18.0, self.voice_noise_threshold, 0.5, self._on_voice_threshold_slider,
              'Extra dB before showing. More = only big speech, less = sensitive to quiet sounds'),
+          ('Voice Max Hz', 500, 8000, self.voice_max_freq, 50, self._on_voice_max_freq_slider,
+           'Upper limit for voice/noise polar charts. More = see consonants, less = focus on lows'),
             ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider,
              'Minimum bins in spectrogram. More = smoother view, less = blockier but faster'),
         ]
@@ -467,6 +467,18 @@ class AudioVisualizer:
 
     def _on_voice_threshold_slider(self, value):
         self.voice_noise_threshold = max(0.0, float(value))
+
+    def _on_voice_max_freq_slider(self, value):
+        new_max = np.clip(float(value), 500.0, self.bands_max_freq)
+        if np.isclose(new_max, self.voice_max_freq):
+            return
+        self.voice_max_freq = new_max
+        self._configure_voice_bins()
+        self.voice_noise_history_frames.clear()
+        self.prev_voice_bin_magnitudes = None
+        self.prev_noise_levels = None
+        self.should_update_colors = True
+        self._update_polar_frequency_labels()
 
     def _on_spectrogram_bins_slider(self, value):
         new_min = max(1, int(round(value)))
@@ -618,6 +630,29 @@ class AudioVisualizer:
         self.should_update_colors = True
         if hasattr(self, 'ax_bars'):
             self.ax_bars.set_xlim(0, self.bands_max_freq)
+
+    def _configure_voice_bins(self):
+        voice_freq_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
+        self.voice_bin_centers = (voice_freq_edges[:-1] + voice_freq_edges[1:]) / 2
+
+    def _format_frequency_label(self, value):
+        if value >= 1000:
+            scaled = value / 1000.0
+            text = f'{scaled:.1f}'.rstrip('0').rstrip('.')
+            return f'{text}k'
+        return f'{int(round(value))}'
+
+    def _update_polar_frequency_labels(self):
+        ticks = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        label_freqs = np.linspace(self.voice_max_freq / 4, self.voice_max_freq, len(ticks))
+        labels = [self._format_frequency_label(freq) for freq in label_freqs]
+        for axis in (getattr(self, 'ax_voice_bars', None), getattr(self, 'ax_noise_bars', None)):
+            if axis is None:
+                continue
+            axis.set_xticks(ticks)
+            axis.set_xticklabels(labels)
+            for label in axis.get_xticklabels():
+                label.set_alpha(self.label_alpha)
 
     def _color_change_mask(self, cached_colors, new_colors):
         if cached_colors is None or len(cached_colors) != len(new_colors):

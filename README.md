@@ -11,8 +11,8 @@ Minimalist realtime visualizer built with Python, matplotlib, numpy, scipy, and 
 - **Mel Spectrogram (top)** – 40 mel banks spanning 80–8000 Hz. Frames are de-noised with a 30th-percentile noise floor, raised to power 1.5 for contrast, and can be zoomed with a range slider that re-samples bins so the zoomed view always stays smooth.
 - **Waveform (middle)** – Raw signal after an 80 Hz high-pass filter. The vertical scale auto-adjusts with a smoothed ±zoom indicator, and recent frames linger as translucent trails whose fade speed is slider-controlled.
 - **Frequency Panels (bottom)**
-	- **Voice Polar Chart (left)** – 30 bins from 0–2000 Hz arranged radially. Magnitudes are interpolated at the bin centers, appended to a 45-frame per-bin history, and once five frames exist the 25th-percentile baseline is subtracted (earlier frames fall back to a frame-level 10th percentile). Anything more than 8 dB above that floor is multiplied by the voice gain slider (default ×1.6) and rendered between radius 15–60.
-	- **Noise Polar Chart (bottom-right)** – Shares the same bins as the voice chart but displays the tracked per-bin baseline directly. Baselines are normalized within the current frame, smoothed, and drawn between radius 10–45 with the same purple palette so you can watch ambient noise patterns wrap around the circle in real time.
+	- **Voice Polar Chart (left)** – 30 bins from 0–2000 Hz arranged radially. Magnitudes are interpolated at the bin centers, appended to a 45-frame per-bin history, and once five frames exist the 25th-percentile baseline is subtracted (earlier frames fall back to a frame-level 10th percentile). Anything more than 8 dB above that floor is multiplied by the voice gain slider (default ×1.6) and rendered between radius 15–60. A **Voice Max Hz** slider lets you raise the ceiling (up to 8 kHz) or lower it to focus only on fundamentals, and the polar tick labels follow the new range.
+	- **Noise Polar Chart (bottom-right)** – Shares the same bins as the voice chart but displays the tracked per-bin baseline directly. Baselines are normalized within the current frame, smoothed, and drawn between radius 10–45 with the same purple palette so you can watch ambient noise patterns wrap around the circle in real time. It mirrors the Voice Max Hz control so you can see exactly which ambient frequencies are feeding the subtraction curve.
 	- **Full-Range Bars (right)** – 50 rectangular bins from 0–8000 Hz. Magnitudes get a 60 dB offset, subtract the rolling 35th-percentile baseline (4-frame history), and smooth with an EMA before recoloring.
 
 ## Signal Processing
@@ -29,6 +29,7 @@ On the right edge, a toggleable panel exposes live sliders:
 
 - Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade (trail decay).
 - Voice controls: Voice Gain, Voice Noise Frames (history length), Voice Threshold (dB gap before drawing bars).
+- Voice Max Hz slider raises/lowers the upper bound for both polar plots so you can inspect just the low fundamentals or extend into consonant territory live.
 - Spectro Bins and a Spectro Hz RangeSlider for spectrogram density/zoom.
 - Hovering any label pops a minimalist tooltip describing what that control does, so you can tune by feel without referencing docs.
 
