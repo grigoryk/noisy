@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.collections import PolyCollection
+from matplotlib.widgets import Slider, Button, RangeSlider
 from scipy.signal import butter, sosfilt
 import line_profiler
 
@@ -33,9 +34,10 @@ class AudioVisualizer:
         # Frequency bands tuning
         self.num_bins = num_bins  # how many bars to display (higher = more detail)
         self.bands_max_freq = 8000  # highest frequency to analyze and display (Hz)
-        self.bands_baseline_percentile = 0  # cuts off bottom N% as noise floor (higher = more cutoff)
-        self.bands_magnitude_offset = 80  # shifts magnitude values up (dB offset for visibility)
-        self.bands_magnitude_scale = 80  # normalization factor for colors
+        self.bands_baseline_percentile = 35  # cuts off bottom N% as noise floor (higher = more cutoff)
+        self.bands_noise_history_size = 4
+        self.bands_magnitude_offset = 60  # shifts magnitude values up (dB offset for visibility)
+        self.bands_magnitude_scale = 60  # normalization factor for colors
         self.bands_smoothing = 0.7  # how smooth bar transitions are (higher = smoother)
         
         # Voice frequency bands tuning
@@ -51,6 +53,9 @@ class AudioVisualizer:
         self.spectrogram_max_freq = 8000  # max frequency to display (Hz)
         self.spectrogram_noise_floor = 30  # percentile for noise removal (higher = more aggressive)
         self.spectrogram_power = 1.5  # contrast enhancement (higher = more contrast)
+        self.spectrogram_view_min = 0
+        self.spectrogram_view_max = self.spectrogram_max_freq
+        self.spectrogram_min_view_bins = 40
         
         # Mel spectrogram tuning
         self.mel_banks = 40  # number of frequency bands
@@ -87,6 +92,7 @@ class AudioVisualizer:
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
         self.voice_noise_floor_history = []
+        self.bands_noise_floor_history = []
         self.voice_bar_colors = None
         self.voice_bar_heights = None
         voice_freq_edges = np.linspace(0, self.voice_max_freq, self.voice_num_bins + 1)
@@ -109,12 +115,6 @@ class AudioVisualizer:
         self.mel_bin_starts = None
         self.mel_bin_ends = None
         self.mel_freq_len = None
-        self.frequency_bin_edges = np.linspace(0, self.bands_max_freq, self.num_bins + 1)
-        self.frequency_bin_centers = (self.frequency_bin_edges[:-1] + self.frequency_bin_edges[1:]) / 2
-        self.frequency_bin_width = self.frequency_bin_edges[1] - self.frequency_bin_edges[0]
-        bar_width = self.frequency_bin_width * 0.8
-        self.bar_left = self.frequency_bin_centers - bar_width / 2
-        self.bar_right = self.frequency_bin_centers + bar_width / 2
         self.bars_vertices = None
         self.bars_collection = None
         self.bars_paths = None
@@ -130,7 +130,7 @@ class AudioVisualizer:
         plt.rcParams['xtick.color'] = self.border_color
         plt.rcParams['ytick.color'] = self.border_color
         self.fig = plt.figure(figsize=(16, 9), facecolor=self.background_color)
-        self.fig.subplots_adjust(left=0.06, right=0.97, top=0.94, bottom=0.06)
+        self.fig.subplots_adjust(left=0.06, right=0.78, top=0.94, bottom=0.06)
         
         gs = self.fig.add_gridspec(3, 1, height_ratios=[1.5, 1, 1.5], hspace=0.2)
         
@@ -142,11 +142,14 @@ class AudioVisualizer:
         self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], projection='polar', facecolor=self.background_color)
         self.ax_bars = self.fig.add_subplot(gs_bottom[1], facecolor=self.background_color)
         
+        self._configure_frequency_bins(self.num_bins)
+        
         self.setup_waveform()
         self.setup_spectrogram()
         self.setup_voice_frequency_bands()
         self.setup_frequency_bands()
         self.setup_fps_display()
+        self.setup_frequency_tuning_controls()
     
     def setup_waveform(self):
         self.line_wave, = self.ax_wave.plot([], [], lw=self.waveform_linewidth, color=self.waveform_color, alpha=self.waveform_alpha)
@@ -168,11 +171,17 @@ class AudioVisualizer:
     
     def setup_spectrogram(self):
         # Use mel-scale frequency bins for perceptually meaningful spacing
-        self.spectrogram_data = np.zeros((100, self.mel_banks))
-        self.spectrogram_img = self.ax_spectrogram.imshow(self.spectrogram_data, 
-                                                           aspect='auto', origin='lower',
-                                                           cmap=self.spectrogram_colormap, extent=[0, self.spectrogram_max_freq, 0, 100])
+        self.spectrogram_full_data = np.zeros((100, self.mel_banks))
+        self.spectrogram_view_indices = np.arange(self.mel_banks)
+        self.spectrogram_img = self.ax_spectrogram.imshow(
+            self.spectrogram_full_data[:, self.spectrogram_view_indices],
+            aspect='auto',
+            origin='lower',
+            cmap=self.spectrogram_colormap,
+            extent=[0, self.spectrogram_max_freq, 0, 100],
+        )
         self.ax_spectrogram.set_yticks([])
+        self._update_spectrogram_view(self.spectrogram_view_min, self.spectrogram_view_max, refresh_ticks=True)
         # Show logarithmically-spaced Hz labels
         self.ax_spectrogram.set_xticks([100, 200, 500, 1000, 2000, 4000, 8000])
         self.ax_spectrogram.xaxis.tick_top()
@@ -226,6 +235,105 @@ class AudioVisualizer:
                                      bbox=dict(boxstyle='round,pad=0.3', facecolor=self.background_color,
                                               edgecolor=self.border_color, alpha=0.3))
     
+    def setup_frequency_tuning_controls(self):
+        panel_left = 0.81
+        panel_width = 0.17
+        button_height = 0.04
+        slider_height = 0.03
+        slider_spacing = 0.008
+        top = 0.9
+        button_ax = self.fig.add_axes([panel_left, top, panel_width, button_height])
+        button_ax.set_facecolor(self.background_color)
+        self.tuning_toggle_button = Button(button_ax, 'Hide Tuning', color=self.border_color,
+                                           hovercolor=self.palette[3])
+        self.tuning_toggle_button.label.set_color(self.background_color)
+        self.tuning_toggle_button.on_clicked(self._toggle_tuning_controls)
+        current_top = top - button_height - 0.01
+        slider_defs = [
+            ('Baseline %', 0, 60, self.bands_baseline_percentile, 1, self._on_baseline_slider),
+            ('Noise Frames', 1, 10, self.bands_noise_history_size, 1, self._on_noise_history_slider),
+            ('Offset (dB)', 20, 100, self.bands_magnitude_offset, 1, self._on_offset_slider),
+            ('Scale (dB)', 20, 120, self.bands_magnitude_scale, 1, self._on_scale_slider),
+            ('Smoothing', 0.0, 0.95, self.bands_smoothing, 0.01, self._on_smoothing_slider),
+        ]
+        self.tuning_sliders = []
+        self.tuning_controls_visible = True
+        for label, vmin, vmax, init, step, callback in slider_defs:
+            ax = self.fig.add_axes([panel_left, current_top - slider_height, panel_width, slider_height])
+            ax.set_facecolor(self.background_color)
+            slider = Slider(ax=ax, label=label, valmin=vmin, valmax=vmax, valinit=init,
+                            valstep=step)
+            slider.on_changed(callback)
+            slider.label.set_color(self.text_color)
+            slider.valtext.set_color(self.text_color)
+            self.tuning_sliders.append(slider)
+            current_top -= slider_height + slider_spacing
+        range_height = 0.04
+        range_ax = self.fig.add_axes([panel_left, current_top - range_height, panel_width, range_height])
+        range_ax.set_facecolor(self.background_color)
+        self.spectrogram_range_slider = RangeSlider(ax=range_ax,
+                                                    label='Spectro Hz',
+                                                    valmin=0,
+                                                    valmax=self.spectrogram_max_freq,
+                                                    valinit=(self.spectrogram_view_min, self.spectrogram_view_max))
+        self.spectrogram_range_slider.on_changed(self._on_spectrogram_range_slider)
+        self.spectrogram_range_slider.label.set_color(self.text_color)
+        self.spectrogram_range_slider.valtext.set_color(self.text_color)
+        self.tuning_sliders.append(self.spectrogram_range_slider)
+        self._set_tuning_controls_visible(True)
+    
+    def _set_tuning_controls_visible(self, visible):
+        if not hasattr(self, 'tuning_sliders'):
+            return
+        for slider in self.tuning_sliders:
+            slider.ax.set_visible(visible)
+            slider.label.set_visible(visible)
+            slider.valtext.set_visible(visible)
+        label = 'Hide Tuning' if visible else 'Show Tuning'
+        if hasattr(self, 'tuning_toggle_button'):
+            self.tuning_toggle_button.label.set_text(label)
+        self.fig.canvas.draw_idle()
+    
+    def _toggle_tuning_controls(self, _event):
+        self.tuning_controls_visible = not getattr(self, 'tuning_controls_visible', True)
+        self._set_tuning_controls_visible(self.tuning_controls_visible)
+    
+    def _on_baseline_slider(self, value):
+        self.bands_baseline_percentile = float(value)
+        self.bands_noise_floor_history.clear()
+        self.should_update_colors = True
+    
+    def _on_noise_history_slider(self, value):
+        new_size = max(1, int(round(value)))
+        self.bands_noise_history_size = new_size
+        if len(self.bands_noise_floor_history) > new_size:
+            self.bands_noise_floor_history = self.bands_noise_floor_history[-new_size:]
+        self.should_update_colors = True
+    
+    def _on_offset_slider(self, value):
+        self.bands_magnitude_offset = float(value)
+        self.should_update_colors = True
+    
+    def _on_scale_slider(self, value):
+        self.bands_magnitude_scale = max(float(value), 1e-3)
+        self.should_update_colors = True
+    
+    def _on_smoothing_slider(self, value):
+        self.bands_smoothing = float(value)
+        self.should_update_colors = True
+    
+    def _on_spectrogram_range_slider(self, values):
+        min_val, max_val = values
+        min_val = max(0.0, min_val)
+        max_val = min(self.spectrogram_max_freq, max_val)
+        if max_val - min_val < 50:
+            midpoint = (min_val + max_val) / 2
+            half_span = 25
+            min_val = max(0.0, midpoint - half_span)
+            max_val = min(self.spectrogram_max_freq, midpoint + half_span)
+            self.spectrogram_range_slider.set_val((min_val, max_val))
+        self._update_spectrogram_view(min_val, max_val, refresh_ticks=True)
+    
     @line_profiler.profile
     def update_waveform(self):
         buffer_len = len(self.audio_buffer)
@@ -267,6 +375,89 @@ class AudioVisualizer:
         mel_high = 2595 * np.log10(1 + self.mel_freq_high / 700)
         mel_points = np.linspace(mel_low, mel_high, self.mel_banks + 2)
         self.mel_hz_points = 700 * (10**(mel_points / 2595) - 1)
+        self.mel_bin_centers = self.mel_hz_points[1:-1]
+
+    def _update_spectrogram_view(self, min_val, max_val, refresh_ticks=False):
+        min_val = max(0.0, min(min_val, self.spectrogram_max_freq))
+        max_val = max(min_val + 1.0, min(max_val, self.spectrogram_max_freq))
+        if max_val - min_val < 50:
+            midpoint = (min_val + max_val) / 2
+            min_val = max(0.0, midpoint - 25)
+            max_val = min(self.spectrogram_max_freq, midpoint + 25)
+        mask = (self.mel_bin_centers >= min_val) & (self.mel_bin_centers <= max_val)
+        if not np.any(mask):
+            idx = np.argmin(np.abs(self.mel_bin_centers - (min_val + max_val) / 2))
+            mask[idx] = True
+        indices = np.flatnonzero(mask)
+        if indices.size == 0:
+            indices = np.arange(len(self.mel_bin_centers))
+        self.spectrogram_view_indices = indices
+        self.spectrogram_view_min = min_val
+        self.spectrogram_view_max = max_val
+        self._update_spectrogram_image(refresh_ticks)
+
+    def _update_spectrogram_image(self, refresh_ticks=False):
+        view_data, _ = self._get_spectrogram_view_data()
+        self.spectrogram_img.set_data(view_data)
+        self.spectrogram_img.set_extent([self.spectrogram_view_min, self.spectrogram_view_max, 0, 100])
+        self.ax_spectrogram.set_xlim(self.spectrogram_view_min, self.spectrogram_view_max)
+        if refresh_ticks:
+            labeled_ticks = [100, 200, 500, 1000, 2000, 4000, 8000]
+            ticks = [tick for tick in labeled_ticks if self.spectrogram_view_min <= tick <= self.spectrogram_view_max]
+            if len(ticks) < 2:
+                ticks = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, 4)
+            self.ax_spectrogram.set_xticks(ticks)
+            self.fig.canvas.draw_idle()
+
+    def _get_spectrogram_view_data(self):
+        indices = self.spectrogram_view_indices
+        if indices.size == 0:
+            indices = np.arange(len(self.mel_bin_centers))
+        view_centers = self.mel_bin_centers[indices]
+        view_data = self.spectrogram_full_data[:, indices]
+        current_bins = view_data.shape[1]
+        if current_bins == 0:
+            target_centers = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, self.spectrogram_min_view_bins)
+            return np.zeros((self.spectrogram_full_data.shape[0], self.spectrogram_min_view_bins)), target_centers
+        if current_bins >= self.spectrogram_min_view_bins:
+            return view_data, view_centers
+        target_centers = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, self.spectrogram_min_view_bins)
+        if current_bins == 1:
+            repeated = np.repeat(view_data, self.spectrogram_min_view_bins, axis=1)
+            return repeated, target_centers
+        interpolated = np.empty((view_data.shape[0], self.spectrogram_min_view_bins))
+        base_x = view_centers
+        for row_idx in range(view_data.shape[0]):
+            interpolated[row_idx] = np.interp(
+                target_centers,
+                base_x,
+                view_data[row_idx],
+                left=view_data[row_idx, 0],
+                right=view_data[row_idx, -1],
+            )
+        return interpolated, target_centers
+
+    def _configure_frequency_bins(self, bin_count=None):
+        target_bins = int(round(bin_count if bin_count is not None else self.num_bins))
+        target_bins = max(1, target_bins)
+        edges = np.linspace(0, self.bands_max_freq, target_bins + 1)
+        centers = (edges[:-1] + edges[1:]) / 2
+        widths = np.diff(edges)
+        self.frequency_bin_edges = edges
+        self.frequency_bin_centers = centers
+        self.bar_left = centers - widths / 2
+        self.bar_right = centers + widths / 2
+        self.bar_widths = widths
+        self.num_bins = target_bins
+        self.prev_bin_magnitudes = None
+        self.bars_vertices = None
+        self.bars_collection = None
+        self.bars_paths = None
+        self.bars_colors = None
+        self.bars_heights = None
+        self.should_update_colors = True
+        if hasattr(self, 'ax_bars'):
+            self.ax_bars.set_xlim(0, self.bands_max_freq)
 
     def _color_change_mask(self, cached_colors, new_colors):
         if cached_colors is None or len(cached_colors) != len(new_colors):
@@ -347,9 +538,9 @@ class AudioVisualizer:
         mel_normalized = self._normalize_magnitude(mel_magnitude, self.spectrogram_noise_floor)
         mel_normalized = np.power(mel_normalized, self.spectrogram_power)
         
-        self.spectrogram_data = np.roll(self.spectrogram_data, 1, axis=0)
-        self.spectrogram_data[0, :] = mel_normalized
-        self.spectrogram_img.set_data(self.spectrogram_data)
+        self.spectrogram_full_data = np.roll(self.spectrogram_full_data, 1, axis=0)
+        self.spectrogram_full_data[0, :] = mel_normalized
+        self._update_spectrogram_image()
         self.spectrogram_img.set_clim(0, 1)
     
     @line_profiler.profile
@@ -423,7 +614,11 @@ class AudioVisualizer:
         
         # Remove baseline noise and apply smoothing
         if self.bands_baseline_percentile > 0:
-            baseline = self._fast_percentile(bin_magnitudes, self.bands_baseline_percentile)
+            current_floor = self._fast_percentile(bin_magnitudes, self.bands_baseline_percentile)
+            self.bands_noise_floor_history.append(current_floor)
+            if len(self.bands_noise_floor_history) > self.bands_noise_history_size:
+                self.bands_noise_floor_history.pop(0)
+            baseline = np.mean(self.bands_noise_floor_history)
             bin_magnitudes = np.maximum(bin_magnitudes - baseline, 0)
         
         if self.prev_bin_magnitudes is not None:

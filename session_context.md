@@ -27,6 +27,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Logarithmic frequency display: [100, 200, 500, 1000, 2000, 4000, 8000] Hz
 - 30th percentile noise floor removal
 - Power = 1.5 for contrast enhancement
+- Range slider (in tuning panel) crops the spectrogram to any 0-8 kHz window and re-samples the data so the zoomed view always displays at least 40 bins
 
 #### 2. Dynamic Waveform
 - Zoom level: 10x (adjustable padding around signal)
@@ -47,10 +48,12 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Starts at top (12 o'clock), goes clockwise
 
 #### 4. Full Range Frequency Bars
-- 100 bins covering 0-8000 Hz
+- 50 bins covering 0-8000 Hz
 - Interpolated magnitude values for smooth visualization
 - Color-mapped by magnitude
-- 80 dB magnitude offset and scale for visibility
+- Bottom 35th percentile treated as adaptive noise floor (rolling window of 4 frames) before visualization
+- 60 dB magnitude offset/scale keep palette responsive while peaks can extend higher
+- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, and smoothing in real time; panel can be hidden via toggle button
 
 ### Configuration Variables (Extracted)
 - `label_alpha = 0.35` - opacity for all labels/ticks
@@ -59,6 +62,11 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `waveform_alpha = 0.9` - waveform line opacity
 - `voice_noise_threshold = 8` - dB above noise floor to display
 - `voice_noise_history_size = 1` - frames for noise tracking
+- `bands_baseline_percentile = 35` - dynamic noise floor percentile for full-range bars
+- `bands_noise_history_size = 4` - frames to average baseline
+- `bands_magnitude_offset = 60`, `bands_magnitude_scale = 60`
+- `spectrogram_view_min = 0`, `spectrogram_view_max = 8000` - controlled by live range slider
+- `spectrogram_min_view_bins = 40` - minimum number of columns shown in any zoomed spectrogram view
 
 ### Visual Aesthetics
 - **No titles** on any graphs
@@ -107,6 +115,10 @@ threshold = adaptive_noise_floor + 8
 9. Skipped redundant bar height/color updates by caching drawn values (fewer matplotlib patch updates per frame)
 10. Added `_fast_percentile` helper to replace repeated `np.percentile` calls in noise removal paths
 11. Offset and clipped voice polar bars between 15-60 radius so activity remains visible even at low magnitudes
+12. Introduced adaptive baseline removal for rectangular frequency bars (35th percentile, rolling 4-frame average) and retuned magnitude offsets for more note contrast
+13. Added matplotlib slider UI to tweak frequency-bar tuning parameters live (with hide/show toggle)
+14. Added spectrogram frequency RangeSlider to zoom into specific Hz spans without restarting the app
+15. Restricted the range slider to the spectrogram and slice mel bins dynamically so zoomed views actually change what the top panel shows, always re-sampling to keep at least 40 bins visible
 
 ## File Structure
 ```
