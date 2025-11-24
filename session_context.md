@@ -9,7 +9,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 1. **Top (1.5x height)**: Mel-scaled spectrogram (0-8000 Hz)
 2. **Middle (1x height)**: Waveform with dynamic scaling
 3. **Bottom (1.5x height)**: Split into two panels
-   - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0-1000 Hz)
+   - **Left (1/3 width)**: Voice frequencies - Polar bar chart (0-2000 Hz)
    - **Right (2/3 width)**: Full range frequency bars (0-8000 Hz)
 
 ### Color Palette - Deep Ocean Purple Theme
@@ -41,7 +41,7 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - **Adaptive noise filtering**:
    - Uses 10th percentile per-frame noise estimate (history size = 1)
    - Displays bins only when they exceed noise floor by 8 dB
-   - Bars are amplified ×1.6 before thresholding
+   - Bars are amplified ×`voice_amplification` (default 1.6, slider-controlled) before thresholding
 - Radial offset keeps bars between 15 and 60 units from center so even subtle activity remains visible
 - Minimal labels: 4 frequency markers (250, 500, 750, 1000 Hz)
 - 3 magnitude markers (30, 45, 60 dB)
@@ -53,7 +53,12 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Color-mapped by magnitude
 - Bottom 35th percentile treated as adaptive noise floor (rolling window of 4 frames) before visualization
 - 60 dB magnitude offset/scale keep palette responsive while peaks can extend higher
-- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, and smoothing in real time; panel can be hidden via toggle button
+- Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, spectrogram bin count, voice gain, and the spectrogram Hz span in real time; panel can be hidden via toggle button
+
+#### 5. Tuning Controls (Right Panel)
+- Hide/Show button toggles the entire panel
+- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Voice Gain, Spectro Bins, Spectro Hz Range
+- Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
 
 ### Configuration Variables (Extracted)
 - `label_alpha = 0.35` - opacity for all labels/ticks
