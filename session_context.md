@@ -6,9 +6,9 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 ## Current Architecture
 
 ### Visual Layout (3 rows)
-1. **Top (1.5x height)**: Mel-scaled spectrogram (0-8000 Hz)
+1. **Top (1.5x height)**: Split mel spectrogram row — left panel shows the signal spectrogram (0–8000 Hz) and the right panel mirrors the noise spectrogram derived from the percentile tracker; a tuning toggle can hide the noise view and let the signal spectrogram span the full width
 2. **Middle (1x height)**: Waveform with dynamic scaling
-3. **Bottom (1.5x height)**: Three-column layout with voice polar on the left, the noise polar chart directly beside it, and the full-range bars stretching all the way to the tuning panel on the right
+3. **Bottom (1.5x height)**: Three-column layout with voice polar on the left, the noise polar chart directly beside it, and the full-range bars stretching all the way to the tuning panel on the right; when the noise polar toggle is off, the bar graph grows into that middle column
    - **Left column**: Voice frequencies - Polar bar chart (0–2000 Hz by default, live-adjustable up to 8 kHz)
    - **Middle column**: Noise polar chart that mirrors the voice bins so ambient energy is visible separately and follows the same adjustable ceiling
    - **Right column**: Full range frequency bars (0–8000 Hz) spanning the remaining width for maximum horizontal real estate
@@ -28,16 +28,23 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Logarithmic frequency display: [100, 200, 500, 1000, 2000, 4000, 8000] Hz
 - 30th percentile noise floor removal
 - Power = 1.5 for contrast enhancement
+- Signal panel now shows `(mel frame - noise frame)` so only energy above the rolling noise baseline is rendered
 - Range slider (in tuning panel) crops the spectrogram to any 0-8 kHz window and re-samples the data so the zoomed view always displays at least 40 bins
 
-#### 2. Dynamic Waveform
+#### 2. Noise Spectrogram (NEW)
+- Runs the same mel-bin pipeline but feeds the percentile-based noise frame into a separate history buffer so ambience is tracked independently of speech
+- Shares the color map and axes styling with the primary spectrogram for perfect visual alignment
+- Always uses the same zoom window and tick set as the signal panel so side-by-side comparisons stay in sync
+- Noise history length mirrors the voice/noise polar baseline tracker by default (45 frames)
+
+#### 3. Dynamic Waveform
 - Zoom level: 10x (adjustable padding around signal)
 - 8-frame history for smooth zoom adaptation
 - 0.8 smoothing factor for transitions
 - Scale indicator shows current zoom level
 - Optional trail fade keeps recent frames visible with slider-controlled exponential decay
 
-#### 3. Voice Polar Chart (NEW)
+#### 4. Voice Polar Chart (NEW)
 - 30 radial bins covering 0–2000 Hz by default (slider extends ceiling up to 8 kHz or down to 500 Hz)
 - **Adaptive noise filtering**:
    - Interpolates each frame at 30 bin centers and stores up to 45 frames of history per bin
@@ -46,20 +53,20 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - Radial offset keeps bars between radius 15–60
 - Angle labels (4 positions) track quarter-points of the current Voice Max Hz so ticks always match the selected band
 
-#### 4. Noise Polar Chart (NEW)
+#### 5. Noise Polar Chart (NEW)
 - Shares the same bin geometry as the voice chart but renders the tracked per-bin noise baseline
 - Radii span 10–45 so the floor sits inside the voice energy
 - Normalized each frame and smoothed with the same EMA so it mirrors motion cleanly
 - Automatically follows the Voice Max Hz slider so the noise visualization always matches the speech band you’re monitoring
 
-#### 5. Full Range Frequency Bars
+#### 6. Full Range Frequency Bars
 - 50 rectangular bins across 0–8000 Hz with adaptive percentile noise removal
 - 60 dB offset/scale keep the palette responsive
 - Interactive slider panel (right edge) adjusts baseline percentile, noise history length, offset, scale, smoothing, wave fade, voice gain, Voice Max Hz, spectrogram bin count, and the spectrogram Hz span in real time; panel can be hidden via toggle button
 
-#### 6. Tuning Controls (Right Panel)
 - Hide/Show button toggles the entire panel
-- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, **Voice Max Hz**, Spectro Bins, Spectro Hz Range
+- Sliders: Baseline %, Noise Frames, Offset (dB), Scale (dB), Smoothing, Wave Fade, Voice Gain, Voice Noise Frames, Voice Threshold, **Voice Max Hz**, Spectro Aggro, Voice Aggro (now reversed so higher values mean gentler subtraction), Spectro Bins, Spectro Hz Range
+- Checkboxes: Spectro Subtract, Voice Subtract (now shows raw magnitudes when disabled), Show Noise Spectro, Show Noise Polar — each sits in a high-contrast card with glowing labels, bold active text, and compact circular badges to the left that glow magenta when enabled and stay dim charcoal when disabled (Matplotlib’s default X icons are fully hidden)
 - Voice Max Hz simultaneously moves the ceiling for both polar charts so you can focus on fundamentals or include consonants without restarting
 - Spectro Hz uses a RangeSlider that enforces at least ~50 Hz span and re-samples mel bins to keep transitions smooth
 - Hover overlays explain what each label/slider adjusts when you pause over the control
@@ -79,6 +86,12 @@ Real-time audio visualization tool with artistic aesthetic, built with Python, m
 - `bands_magnitude_offset = 60`, `bands_magnitude_scale = 60`
 - `spectrogram_view_min = 0`, `spectrogram_view_max = 8000` - controlled by live range slider
 - `spectrogram_min_view_bins = 40` - minimum number of columns shown in any zoomed spectrogram view
+- `spectrogram_noise_history_size = voice_noise_history_size` - shared baseline frame count for the noise spectrogram buffer
+- `spectrogram_subtract_enabled = True` - checkbox gating whether the signal spectrogram subtracts the noise frame
+- `voice_subtract_enabled = True` - checkbox gating whether the voice polar chart subtracts the tracked baseline
+- `spectrogram_subtract_aggressiveness = 1.0` - slider-controlled multiplier on the noise frame before subtraction
+- `voice_subtract_aggressiveness = 1.0` - slider value where larger numbers now mean softer subtraction (internally inverted to control baseline strength)
+- `show_noise_spectrogram = True`, `show_noise_polar = True` - checkbox-controlled visibility for the two noise panels and their responsive layout changes
 
 ### Visual Aesthetics
 - **No titles** on any graphs
@@ -148,6 +161,16 @@ bars = signal * voice_amplification
 25. Added hover tooltips to every tuning control so users get inline descriptions without leaving the UI
 26. Added a dedicated noise polar chart that renders the per-bin noise baseline in real time next to the full-range bars and wired it into the same smoothing/percentile pipeline as the voice view
 27. Added a Voice Max Hz slider that retunes the voice/noise polar ceiling (and tick labels) live up to 8 kHz
+28. Refactored the top row into twin spectrogram panels and added a noise spectrogram history buffer so ambience renders beside the main signal in real time
+29. Subtracted the tracked noise frame from the main spectrogram feed so the signal panel only displays activity above the ambient baseline while the noise panel continues to show the floor itself
+30. Added six UI toggles: enable/disable subtraction and aggressiveness sliders for the spectrogram and voice charts, plus checkboxes to show/hide the noise spectrogram and noise polar (auto-expanding the remaining plots when hidden)
+31. Restyled the toggle UI cards with brighter backgrounds and state-aware colors so the subtraction/noise visibility controls are easier to read
+32. Fixed the Voice Subtract toggle so disabling it shows raw voice magnitudes (threshold bypass) instead of muting the polar chart
+33. Reversed the Voice Aggro slider mapping so pushing it right softens subtraction, keeping the polar bars intuitive when tweaking aggressiveness
+34. Replaced the toggle X icons with bespoke filled-circle buttons that match the purple theme
+35. Boosted the enabled toggle styling with brighter pill backgrounds, bold labels, and larger glowing indicators so active states pop immediately
+36. Rebuilt the CheckButtons styling to override Matplotlib’s scatter-based frames so the purple pills actually render (hidden default checks, recolored frames, resized indicators)
+37. Simplified the toggle visuals to small circular badges anchored next to each label, keeping the glowing state indicator without drowning the text
 
 ## File Structure
 ```

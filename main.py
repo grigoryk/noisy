@@ -6,10 +6,13 @@ import time
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
+from matplotlib import colors as mcolors
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.collections import PolyCollection
-from matplotlib.widgets import Slider, Button, RangeSlider
+from matplotlib.patches import Circle, Ellipse
+from matplotlib.widgets import Slider, Button, RangeSlider, CheckButtons
+from matplotlib.transforms import Bbox
 from scipy.signal import butter, sosfilt
 import line_profiler
 
@@ -61,6 +64,13 @@ class AudioVisualizer:
         self.spectrogram_view_min = 0
         self.spectrogram_view_max = self.spectrogram_max_freq
         self.spectrogram_min_view_bins = 40
+        self.spectrogram_noise_history_size = self.voice_noise_history_size
+        self.spectrogram_subtract_enabled = True
+        self.spectrogram_subtract_aggressiveness = 1.0
+        self.voice_subtract_enabled = True
+        self.voice_subtract_aggressiveness = 1.0
+        self.show_noise_spectrogram = True
+        self.show_noise_polar = True
         
         # Mel spectrogram tuning
         self.mel_banks = 40  # number of frequency bands
@@ -77,6 +87,11 @@ class AudioVisualizer:
         self.waveform_color = '#E354CA'  # bright magenta
         self.border_color = '#D074EB'  # light purple for borders
         self.text_color = '#C254E3'  # medium purple for text
+        self.toggle_panel_color = '#101c30'
+        self.toggle_inactive_color = '#0d1627'
+        self.toggle_active_color = '#513EE6'
+        self.toggle_circle_active = '#E354CA'
+        self.toggle_circle_inactive = '#1a2337'
         self.label_alpha = 0.35  # opacity for all axis labels and ticks (lower = more faint)
         self.label_fontsize = 8  # font size for tick labels
         self.waveform_linewidth = 1.5  # thickness of waveform line
@@ -98,6 +113,7 @@ class AudioVisualizer:
         self.prev_voice_bin_magnitudes = None
         self.ylim_history = []
         self.voice_noise_history_frames = []
+        self.spectrogram_noise_history_frames = []
         self.bands_noise_floor_history = []
         self.voice_bar_colors = None
         self.voice_bar_heights = None
@@ -129,6 +145,7 @@ class AudioVisualizer:
         self.bars_vertices = None
         self.bars_collection = None
         self.bars_paths = None
+        self.noise_spectrogram_img = None
         
         # Pre-compute mel filter bank to avoid recalculating every frame
         self._setup_mel_filterbank()
@@ -149,7 +166,9 @@ class AudioVisualizer:
         
         gs = self.fig.add_gridspec(3, 1, height_ratios=[1.5, 1, 1.5], hspace=0.2)
         
-        self.ax_spectrogram = self.fig.add_subplot(gs[0], facecolor=self.background_color)
+        gs_top = gs[0].subgridspec(1, 2, width_ratios=[1, 1], wspace=0.055)
+        self.ax_spectrogram = self.fig.add_subplot(gs_top[0], facecolor=self.background_color)
+        self.ax_noise_spectrogram = self.fig.add_subplot(gs_top[1], facecolor=self.background_color)
         self.ax_wave = self.fig.add_subplot(gs[1], facecolor=self.background_color)
         
         # Split bottom row into three columns: voice polar, noise polar, and expanded frequency bars
@@ -157,6 +176,12 @@ class AudioVisualizer:
         self.ax_voice_bars = self.fig.add_subplot(gs_bottom[0], projection='polar', facecolor=self.background_color)
         self.ax_noise_bars = self.fig.add_subplot(gs_bottom[1], projection='polar', facecolor=self.background_color)
         self.ax_bars = self.fig.add_subplot(gs_bottom[2], facecolor=self.background_color)
+        self._spectrogram_pos = self.ax_spectrogram.get_position().frozen()
+        self._noise_spectrogram_pos = self.ax_noise_spectrogram.get_position().frozen()
+        self._spectrogram_full_pos = Bbox.union([self._spectrogram_pos, self._noise_spectrogram_pos])
+        self._bars_pos = self.ax_bars.get_position().frozen()
+        self._noise_bars_pos = self.ax_noise_bars.get_position().frozen()
+        self._bars_expanded_pos = Bbox.union([self._bars_pos, self._noise_bars_pos])
         
         self._configure_frequency_bins(self.num_bins)
         
@@ -167,6 +192,7 @@ class AudioVisualizer:
         self.setup_frequency_bands()
         self.setup_fps_display()
         self.setup_frequency_tuning_controls()
+        self._apply_layout_toggles()
     
     def setup_waveform(self):
         self.line_wave, = self.ax_wave.plot([], [], lw=self.waveform_linewidth, color=self.waveform_color, alpha=self.waveform_alpha)
@@ -220,6 +246,7 @@ class AudioVisualizer:
     def setup_spectrogram(self):
         # Use mel-scale frequency bins for perceptually meaningful spacing
         self.spectrogram_full_data = np.zeros((100, self.mel_banks))
+        self.noise_spectrogram_full_data = np.zeros_like(self.spectrogram_full_data)
         self.spectrogram_view_indices = np.arange(self.mel_banks)
         self.spectrogram_img = self.ax_spectrogram.imshow(
             self.spectrogram_full_data[:, self.spectrogram_view_indices],
@@ -228,17 +255,25 @@ class AudioVisualizer:
             cmap=self.spectrogram_colormap,
             extent=[0, self.spectrogram_max_freq, 0, 100],
         )
-        self.ax_spectrogram.set_yticks([])
+        self.noise_spectrogram_img = self.ax_noise_spectrogram.imshow(
+            self.noise_spectrogram_full_data[:, self.spectrogram_view_indices],
+            aspect='auto',
+            origin='lower',
+            cmap=self.spectrogram_colormap,
+            extent=[0, self.spectrogram_max_freq, 0, 100],
+        )
+        for axis, title in ((self.ax_spectrogram, 'SPECTRUM'), (self.ax_noise_spectrogram, 'NOISE')):
+            axis.set_yticks([])
+            axis.set_xticks([100, 200, 500, 1000, 2000, 4000, 8000])
+            axis.xaxis.tick_top()
+            axis.xaxis.set_label_position('top')
+            for spine in axis.spines.values():
+                spine.set_visible(False)
+            axis.tick_params(axis='x', colors=self.border_color, labelsize=self.label_fontsize, which='both')
+            for label in axis.get_xticklabels():
+                label.set_alpha(self.label_alpha)
+            axis.set_title(title, color=self.text_color, fontsize=self.label_fontsize, pad=6, alpha=0.6)
         self._update_spectrogram_view(self.spectrogram_view_min, self.spectrogram_view_max, refresh_ticks=True)
-        # Show logarithmically-spaced Hz labels
-        self.ax_spectrogram.set_xticks([100, 200, 500, 1000, 2000, 4000, 8000])
-        self.ax_spectrogram.xaxis.tick_top()
-        self.ax_spectrogram.xaxis.set_label_position('top')
-        for spine in self.ax_spectrogram.spines.values():
-            spine.set_visible(False)
-        self.ax_spectrogram.tick_params(axis='x', colors=self.border_color, labelsize=self.label_fontsize, which='both')
-        for label in self.ax_spectrogram.get_xticklabels():
-            label.set_alpha(self.label_alpha)
     
     def setup_voice_frequency_bands(self):
         self.ax_voice_bars.set_ylim(self.voice_radius_base, self.voice_radius_max)  # Start bars away from center
@@ -322,10 +357,17 @@ class AudioVisualizer:
              'Extra dB before showing. More = only big speech, less = sensitive to quiet sounds'),
           ('Voice Max Hz', 500, 8000, self.voice_max_freq, 50, self._on_voice_max_freq_slider,
            'Upper limit for voice/noise polar charts. More = see consonants, less = focus on lows'),
+            ('Spectro Aggro', 0.25, 3.0, self.spectrogram_subtract_aggressiveness, 0.05,
+             self._on_spectrogram_subtract_aggressiveness_slider,
+             'Multiplier on the noise frame before subtracting from the spectrogram'),
+            ('Voice Aggro', 0.25, 3.0, self.voice_subtract_aggressiveness, 0.05,
+             self._on_voice_subtract_aggressiveness_slider,
+             'Multiplier on the voice noise baseline before subtracting it'),
             ('Spectro Bins', 10, 120, self.spectrogram_min_view_bins, 1, self._on_spectrogram_bins_slider,
              'Minimum bins in spectrogram. More = smoother view, less = blockier but faster'),
         ]
         self.tuning_sliders = []
+        self.tuning_toggle_widgets = []
         self.tuning_controls_visible = True
         self._ensure_tuning_tooltip_support()
         for label, vmin, vmax, init, step, callback, description in slider_defs:
@@ -353,6 +395,43 @@ class AudioVisualizer:
         self.tuning_sliders.append(self.spectrogram_range_slider)
         self._register_tuning_hover(self.spectrogram_range_slider.label,
                                     'Choose the spectrogram frequency window (drag both handles)')
+        current_top -= range_height + slider_spacing
+        checkbox_height = 0.075
+        subtraction_ax = self.fig.add_axes([panel_left, current_top - checkbox_height, panel_width, checkbox_height])
+        subtraction_ax.set_facecolor(self.background_color)
+        self.subtraction_toggle_labels = ['Spectro Subtract', 'Voice Subtract']
+        self.subtraction_checkbuttons = CheckButtons(
+            subtraction_ax,
+            self.subtraction_toggle_labels,
+            [self.spectrogram_subtract_enabled, self.voice_subtract_enabled],
+        )
+        self._style_checkbuttons(self.subtraction_checkbuttons)
+        self.subtraction_checkbuttons.on_clicked(self._on_subtraction_toggle)
+        self.tuning_toggle_widgets.append(self.subtraction_checkbuttons)
+        toggle_descriptions = [
+            'Enable or disable subtracting the tracked noise frame from the spectrogram',
+            'Enable or disable subtracting the tracked noise floor from voice bars',
+        ]
+        for label_artist, description in zip(self.subtraction_checkbuttons.labels, toggle_descriptions):
+            self._register_tuning_hover(label_artist, description)
+        current_top -= checkbox_height + slider_spacing
+        visibility_ax = self.fig.add_axes([panel_left, current_top - checkbox_height, panel_width, checkbox_height])
+        visibility_ax.set_facecolor(self.background_color)
+        self.noise_toggle_labels = ['Show Noise Spectro', 'Show Noise Polar']
+        self.noise_visibility_checkbuttons = CheckButtons(
+            visibility_ax,
+            self.noise_toggle_labels,
+            [self.show_noise_spectrogram, self.show_noise_polar],
+        )
+        self._style_checkbuttons(self.noise_visibility_checkbuttons)
+        self.noise_visibility_checkbuttons.on_clicked(self._on_noise_visibility_toggle)
+        self.tuning_toggle_widgets.append(self.noise_visibility_checkbuttons)
+        visibility_descriptions = [
+            'Toggle the dedicated noise spectrogram panel',
+            'Toggle the noise polar chart and expand the bar graph',
+        ]
+        for label_artist, description in zip(self.noise_visibility_checkbuttons.labels, visibility_descriptions):
+            self._register_tuning_hover(label_artist, description)
         self._set_tuning_controls_visible(True)
     
     def _set_tuning_controls_visible(self, visible):
@@ -362,6 +441,9 @@ class AudioVisualizer:
             slider.ax.set_visible(visible)
             slider.label.set_visible(visible)
             slider.valtext.set_visible(visible)
+        if hasattr(self, 'tuning_toggle_widgets'):
+            for widget in self.tuning_toggle_widgets:
+                self._set_checkbuttons_visible(widget, visible)
         label = 'Hide Tuning' if visible else 'Show Tuning'
         if hasattr(self, 'tuning_toggle_button'):
             self.tuning_toggle_button.label.set_text(label)
@@ -370,6 +452,172 @@ class AudioVisualizer:
     def _toggle_tuning_controls(self, _event):
         self.tuning_controls_visible = not getattr(self, 'tuning_controls_visible', True)
         self._set_tuning_controls_visible(self.tuning_controls_visible)
+    
+    def _apply_layout_toggles(self):
+        if not hasattr(self, '_spectrogram_pos'):
+            return
+        if self.show_noise_spectrogram:
+            self.ax_spectrogram.set_position(self._spectrogram_pos)
+            self.ax_noise_spectrogram.set_visible(True)
+        else:
+            self.ax_spectrogram.set_position(self._spectrogram_full_pos)
+            self.ax_noise_spectrogram.set_visible(False)
+        if self.show_noise_polar:
+            self.ax_bars.set_position(self._bars_pos)
+            self.ax_noise_bars.set_visible(True)
+        else:
+            self.ax_bars.set_position(self._bars_expanded_pos)
+            self.ax_noise_bars.set_visible(False)
+        self.fig.canvas.draw_idle()
+
+    def _style_checkbuttons(self, widget):
+        widget.ax.set_facecolor(self.toggle_panel_color)
+        for spine in widget.ax.spines.values():
+            spine.set_edgecolor(self.border_color)
+            spine.set_linewidth(1.2)
+        statuses = widget.get_status()
+        for label, active in zip(widget.labels, statuses):
+            label.set_color(self.text_color)
+            label.set_fontsize(self.label_fontsize)
+            label.set_alpha(1.0 if active else 0.55)
+            label.set_fontweight('bold' if active else 'normal')
+            base_x, base_y = label.get_position()
+            label.set_position((0.32, base_y))
+        self._hide_widget_checks(widget)
+        self._ensure_toggle_circles(widget)
+        self._update_toggle_circles(widget, statuses)
+        self._sync_toggle_hit_targets(widget)
+
+    def _set_checkbuttons_visible(self, widget, visible):
+        widget.ax.set_visible(visible)
+        for label in widget.labels:
+            label.set_visible(visible)
+        lines = getattr(widget, 'lines', None)
+        if lines is not None:
+            for entry in lines:
+                for line in entry:
+                    line.set_visible(False)
+        frames = getattr(widget, '_frames', None)
+        if frames is not None:
+            frames.set_visible(visible)
+        checks = getattr(widget, '_checks', None)
+        if checks is not None:
+            checks.set_visible(False)
+        circles = getattr(widget, '_toggle_circles', None)
+        if circles is not None:
+            for circle in circles:
+                circle.set_visible(visible)
+
+    def _ensure_toggle_circles(self, widget):
+        labels = getattr(widget, 'labels', None)
+        if not labels:
+            return
+        centers = []
+        for label in labels:
+            x, y = label.get_position()
+            centers.append((max(0.08, x - 0.11), y))
+        circles = getattr(widget, '_toggle_circles', None)
+        if circles is not None and len(circles) == len(centers):
+            widget._toggle_centers = centers
+            return
+        self._remove_toggle_circles(widget)
+        widget._toggle_centers = centers
+        widget._toggle_circle_diameter = 0.051  # 15% smaller than previous 0.06
+        widget._toggle_circles = []
+        for center in centers:
+            ellipse = Ellipse(center,
+                              width=widget._toggle_circle_diameter,
+                              height=widget._toggle_circle_diameter,
+                              transform=widget.ax.transAxes,
+                              facecolor=self.toggle_circle_inactive,
+                              edgecolor=self.border_color,
+                              linewidth=1.0)
+            widget.ax.add_patch(ellipse)
+            widget._toggle_circles.append(ellipse)
+
+    def _hide_widget_checks(self, widget):
+        frames = getattr(widget, '_frames', None)
+        if frames is not None:
+            offsets = frames.get_offsets()
+            count = len(offsets)
+            if count:
+                transparent = np.zeros((count, 4))
+                frames.set_visible(True)
+                frames.set_facecolor(transparent)
+                frames.set_edgecolor(transparent)
+                frames.set_linewidths(np.zeros(count))
+        checks = getattr(widget, '_checks', None)
+        if checks is not None:
+            checks.set_visible(False)
+
+    def _remove_toggle_circles(self, widget):
+        circles = getattr(widget, '_toggle_circles', None)
+        if not circles:
+            return
+        for circle in circles:
+            circle.remove()
+        widget._toggle_circles = None
+
+    def _update_toggle_circles(self, widget, statuses):
+        circles = getattr(widget, '_toggle_circles', None)
+        centers = getattr(widget, '_toggle_centers', None)
+        if not circles or not centers:
+            return
+        bbox = widget.ax.get_window_extent()
+        if bbox.height <= 0:
+            aspect = 1.0
+        else:
+            aspect = bbox.width / bbox.height
+        base_d = getattr(widget, '_toggle_circle_diameter', 0.06)
+        width = base_d
+        height = base_d * aspect
+        for circle, (center_x, center_y), active in zip(circles, centers, statuses):
+            circle.center = (center_x, center_y)
+            circle.width = width
+            circle.height = height
+            circle.set_facecolor(self.toggle_circle_active if active else self.toggle_circle_inactive)
+            circle.set_edgecolor(self.toggle_circle_active if active else self.border_color)
+            circle.set_alpha(1.0 if active else 0.7)
+            circle.set_linewidth(1.5 if active else 1.0)
+        self._sync_toggle_hit_targets(widget, bbox)
+
+    def _sync_toggle_hit_targets(self, widget, bbox=None):
+        frames = getattr(widget, '_frames', None)
+        centers = getattr(widget, '_toggle_centers', None)
+        if frames is None or centers is None or len(centers) == 0:
+            return
+        centers_arr = np.array(centers)
+        frames.set_offsets(centers_arr)
+        if bbox is None:
+            bbox = widget.ax.get_window_extent()
+        fig = widget.ax.get_figure(root=True)
+        dpi = getattr(fig, 'dpi', 72)
+        diameter = getattr(widget, '_toggle_circle_diameter', 0.05)
+        diameter_px = diameter * bbox.width
+        diameter_pt = diameter_px * 72.0 / dpi
+        size = max(35.0, (diameter_pt * 1.2) ** 2)
+        frames.set_sizes(np.full(len(centers_arr), size))
+
+    def _on_subtraction_toggle(self, label):
+        if not hasattr(self, 'subtraction_checkbuttons'):
+            return
+        states = dict(zip(self.subtraction_toggle_labels, self.subtraction_checkbuttons.get_status()))
+        if label == 'Spectro Subtract':
+            self.spectrogram_subtract_enabled = states[label]
+        elif label == 'Voice Subtract':
+            self.voice_subtract_enabled = states[label]
+        self._style_checkbuttons(self.subtraction_checkbuttons)
+
+    def _on_noise_visibility_toggle(self, label):
+        if not hasattr(self, 'noise_visibility_checkbuttons'):
+            return
+        states = dict(zip(self.noise_toggle_labels, self.noise_visibility_checkbuttons.get_status()))
+        if label == 'Show Noise Spectro':
+            self.show_noise_spectrogram = states[label]
+        elif label == 'Show Noise Polar':
+            self.show_noise_polar = states[label]
+        self._style_checkbuttons(self.noise_visibility_checkbuttons)
+        self._apply_layout_toggles()
     
     def _ensure_tuning_tooltip_support(self):
         if hasattr(self, 'tuning_hover_regions') and hasattr(self, 'tuning_tooltip_text'):
@@ -479,6 +727,12 @@ class AudioVisualizer:
         self.should_update_colors = True
         self._update_polar_frequency_labels()
 
+    def _on_spectrogram_subtract_aggressiveness_slider(self, value):
+        self.spectrogram_subtract_aggressiveness = max(0.0, float(value))
+
+    def _on_voice_subtract_aggressiveness_slider(self, value):
+        self.voice_subtract_aggressiveness = max(0.0, float(value))
+
     def _on_spectrogram_bins_slider(self, value):
         new_min = max(1, int(round(value)))
         if new_min == self.spectrogram_min_view_bins:
@@ -569,28 +823,37 @@ class AudioVisualizer:
 
     def _update_spectrogram_image(self, refresh_ticks=False):
         view_data, _ = self._get_spectrogram_view_data()
-        self.spectrogram_img.set_data(view_data)
-        self.spectrogram_img.set_extent([self.spectrogram_view_min, self.spectrogram_view_max, 0, 100])
-        self.ax_spectrogram.set_xlim(self.spectrogram_view_min, self.spectrogram_view_max)
+        noise_view, _ = self._get_spectrogram_view_data(self.noise_spectrogram_full_data)
+        extent = [self.spectrogram_view_min, self.spectrogram_view_max, 0, 100]
+        if self.spectrogram_img is not None:
+            self.spectrogram_img.set_data(view_data)
+            self.spectrogram_img.set_extent(extent)
+            self.ax_spectrogram.set_xlim(self.spectrogram_view_min, self.spectrogram_view_max)
+        if self.noise_spectrogram_img is not None:
+            self.noise_spectrogram_img.set_data(noise_view)
+            self.noise_spectrogram_img.set_extent(extent)
+            self.ax_noise_spectrogram.set_xlim(self.spectrogram_view_min, self.spectrogram_view_max)
         if refresh_ticks:
             labeled_ticks = [100, 200, 500, 1000, 2000, 4000, 8000]
             ticks = [tick for tick in labeled_ticks if self.spectrogram_view_min <= tick <= self.spectrogram_view_max]
             if len(ticks) < 2:
                 ticks = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, 4)
-            self.ax_spectrogram.set_xticks(ticks)
+            for axis in (self.ax_spectrogram, self.ax_noise_spectrogram):
+                axis.set_xticks(ticks)
             self.fig.canvas.draw_idle()
 
-    def _get_spectrogram_view_data(self):
+    def _get_spectrogram_view_data(self, data_source=None):
+        data = self.spectrogram_full_data if data_source is None else data_source
         indices = self.spectrogram_view_indices
         if indices.size == 0:
             indices = np.arange(len(self.mel_bin_centers))
         view_centers = self.mel_bin_centers[indices]
-        view_data = self.spectrogram_full_data[:, indices]
+        view_data = data[:, indices]
         current_bins = view_data.shape[1]
         if current_bins == 0:
             target_bins = max(2, self.spectrogram_min_view_bins)
             target_centers = np.linspace(self.spectrogram_view_min, self.spectrogram_view_max, target_bins)
-            return np.zeros((self.spectrogram_full_data.shape[0], target_bins)), target_centers
+            return np.zeros((data.shape[0], target_bins)), target_centers
         span = max(1.0, self.spectrogram_view_max - self.spectrogram_view_min)
         bins_from_span = int(round(span * self.mel_banks / self.spectrogram_max_freq))
         target_bins = max(self.spectrogram_min_view_bins, bins_from_span)
@@ -712,6 +975,19 @@ class AudioVisualizer:
         partitioned = np.partition(arr, index, axis=axis)
         return np.take(partitioned, index, axis=axis)
 
+    def _compute_spectrogram_noise_frame(self, mel_normalized):
+        frame = np.asarray(mel_normalized, dtype=float)
+        self.spectrogram_noise_history_frames.append(frame.copy())
+        if len(self.spectrogram_noise_history_frames) > self.spectrogram_noise_history_size:
+            self.spectrogram_noise_history_frames.pop(0)
+        if len(self.spectrogram_noise_history_frames) >= 5:
+            history_matrix = np.vstack(self.spectrogram_noise_history_frames)
+            noise_frame = self._percentile_along_axis(history_matrix, 25, axis=0)
+        else:
+            percentile_value = self._fast_percentile(frame, 10)
+            noise_frame = np.full_like(frame, percentile_value)
+        return np.minimum(noise_frame, frame)
+
     def _ensure_mel_bins(self, freqs):
         freq_len = len(freqs)
         if self.mel_freq_len == freq_len and self.mel_bin_starts is not None:
@@ -778,10 +1054,20 @@ class AudioVisualizer:
         mel_normalized = self._normalize_magnitude(mel_magnitude, self.spectrogram_noise_floor)
         mel_normalized = np.power(mel_normalized, self.spectrogram_power)
         
+        noise_frame = self._compute_spectrogram_noise_frame(mel_normalized)
+        if self.spectrogram_subtract_enabled:
+            adjusted_noise = noise_frame * self.spectrogram_subtract_aggressiveness
+            signal_frame = np.maximum(mel_normalized - adjusted_noise, 0)
+        else:
+            signal_frame = mel_normalized.copy()
         self.spectrogram_full_data = np.roll(self.spectrogram_full_data, 1, axis=0)
-        self.spectrogram_full_data[0, :] = mel_normalized
+        self.spectrogram_full_data[0, :] = signal_frame
+        self.noise_spectrogram_full_data = np.roll(self.noise_spectrogram_full_data, 1, axis=0)
+        self.noise_spectrogram_full_data[0, :] = noise_frame
         self._update_spectrogram_image()
         self.spectrogram_img.set_clim(0, 1)
+        if self.noise_spectrogram_img is not None:
+            self.noise_spectrogram_img.set_clim(0, 1)
     
     @line_profiler.profile
     def update_voice_frequency_bands(self, visible_freqs, visible_magnitude):
@@ -805,7 +1091,13 @@ class AudioVisualizer:
 
         per_bin_noise = np.minimum(per_bin_noise, bin_inputs)
         self._update_noise_floor_display(per_bin_noise)
-        signal_above_noise = bin_inputs - per_bin_noise - self.voice_noise_threshold
+        aggressiveness = 1.0 / max(self.voice_subtract_aggressiveness, 1e-3)
+        if self.voice_subtract_enabled:
+            baseline = np.minimum(per_bin_noise * aggressiveness, bin_inputs)
+            signal_above_noise = bin_inputs - baseline - self.voice_noise_threshold
+        else:
+            shifted = bin_inputs - np.min(bin_inputs)
+            signal_above_noise = shifted
         bin_magnitudes = np.maximum(signal_above_noise, 0) * self.voice_amplification
         
         # Smooth the data
